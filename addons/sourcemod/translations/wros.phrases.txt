@@ -1,0 +1,194 @@
+"Phrases"
+{
+	"OnTopLeftHUD"
+	{
+		"#format"	"{1:s},{2:s}"
+		"en"		"OS: {1} ({2})"
+	}
+	"OnTopLeftHUD_Fallback"
+	{
+		"#format"	"{1:s},{2:s},{3:s}"
+		"en"		"OS: {1} ({2}) ({3})"
+	}
+	"Difference_WR"
+	{
+		"en"		"World Record"
+	}
+	
+	// Choose style menu
+	"ChooseStyle_Title"
+	{
+		"#format"	"{1:s}"
+		"en"		"Offstyle World Records\n \n{1}\n \nChoose a style"
+	}
+	"ChooseStyle_Item"
+	{
+		"#format"	"{1:s},{2:s}"
+		"en"		"{1} ({2})"
+	}
+	// Replay menu
+	"BuildReplayMenu_Title"
+	{
+		"#format"	"{1:s},{2:d},{3:s}"
+		"en"		"Offstyle World Records\n \n{3} - {1} ({2} WR's)\n \nChoose a record to play"
+	}
+	"BuildReplayMenu_Item"
+	{
+		"#format"	"{1:d},{2:s},{3:s},{4:s}"
+		"en"		"[#{1}] {2}\n    {3} ({4})"
+	}
+	"BuildReplayMenu_Nothing"
+	{
+		"en"		"No records"
+	}
+	// WR menu
+	"BuildWRMenu_Title"
+	{
+		"#format"	"{1:s},{2:d},{3:s}"
+		"en"		"Offstyle World Records\n \n{3} - {1} ({2} WR's)"
+	}
+	"BuildWRMenu_Item"
+	{
+		"#format"	"{1:d},{2:s},{3:s},{4:s}"
+		"en"		"[#{1}] {2}\n    {3} ({4})"
+	}
+	"BuildWRMenu_Nothing"
+	{
+		"en"		"No records"
+	}
+	// Record info menu
+	"RecordInfo_Title"
+	{
+		"#format"	"{1:s},{2:s},{3:s},{4:s},{5:s},{6:d},{7:d},{8:.2f},{9:s},{10:s},{11:s}"
+		"en"		"{1} [{2}]\n \n{10} - {11}\n \nDate: {3}\nTime: {4} ({5})\nJumps: {6}\nStrafes: {7} ({8}%%)\nServer: {9}"
+	}
+	"RecordInfo_Title_Country"
+	{
+		"#format"	"{1:s}"
+		"en"		"Country: {1}"
+	}
+	"RecordInfo_Item_SteamProfile"
+	{
+		"en"		"Open Steam profile"
+	}
+	"RecordInfo_Item_OSProfile"
+	{
+		"en"		"Open Offstyle profile"
+	}
+	"RecordInfo_Item_LoadReplay"
+	{
+		"en"		"Load replay"
+	}
+		
+	// Setting menu
+	"SettingItem_Offstyle"
+	{
+		"en"		"Offstyle World Record"
+	}
+	"SettingTitle"
+	{
+		"en"		"Offstyle World Record Settings\n "
+	}
+	"SettingItem_TopLeftHUD"
+	{
+		"en"		"Show WROS in Top Left HUD"
+	}
+	"SettingItem_AfterTopLeft"
+	{
+		"en"		"Show WROS after WR & PB"
+	}
+	"SettingItem_EveryStyle"
+	{
+		"en"		"Show WROS in all styles"
+	}
+	"SettingItem_ShowOnlyDefault"
+	{
+		"en"		"Show WROS only for style Normal"
+	}
+	"SettingItem_FallbackToDefault"
+	{
+		"en"		"Use Normal when the current style has no records"
+	}
+	
+	// Chat
+	"Chat_NoAccess_ReplayFeature"
+	{
+		"en"		"{dodgerblue}[WROS]{white} Replay feature is currently disabled."
+	}
+	"Chat_NoAccess_ReplayStyle"
+	{
+		"en"		"{dodgerblue}[WROS]{white} Replays of this style are currently disabled."
+	}
+	"Chat_NoAccess_ReplayCommand"
+	{
+		"en"		"{dodgerblue}[WROS]{white} You do not have access to replays."
+	}
+	"Chat_BuildWRMenu_Nothing"
+	{
+		"en"		"{dodgerblue}[WROS]{white} No records."
+	}
+	"Chat_BuildReplayMenu_Nothing"
+	{
+		"en"		"{dodgerblue}[WROS]{white} No records."
+	}
+	"Chat_Downloading"
+	{
+		"en"		"{dodgerblue}[WROS]{white} Downloading..."
+	}
+	"Chat_ReplayWrongMap"
+	{
+		"#format"	"{1:s}"
+		"en"		"{dodgerblue}[WROS]{white} Cannot start replay on the current map."
+	}
+	"Chat_Download_Failed"
+	{
+		"en"		"{dodgerblue}[WROS]{fullred} Failed to download the replay, tell an admin to check the logs!"
+	}
+	"Chat_Download_Finished"
+	{
+		"en"		"{dodgerblue}[WROS]{white} Download finished. Starting replay..."
+	}
+	"Chat_Download_Status"
+	{
+		"#format"	"{1:d},{2:d},{3:.2f}"
+		"en"		"{dodgerblue}[WROS]{white} Downloading.. {1} / {2} ({3}%%)"
+	}
+	"Chat_Steam_Profile_URL"
+	{
+		"#format"	"{1:s},{2:s},{3:s}"
+		"en"		"{dodgerblue}[WROS]{white} https://steamcommunity.com/profiles/{3}"
+	}
+	"Chat_Offstyle_Profile_URL"
+	{
+		"#format"	"{1:s},{2:s},{3:s}"
+		"en"		"{dodgerblue}[WROS]{white} https://offstyles.tommyy.dev/players/{3}"
+	}
+	// MOTD
+	"MOTD_Title_SteamProfile"
+	{
+		"#format"	"{1:s},{2:s}"
+		"en"		"Steam Profile {1} [{2}]"
+	}
+	"MOTD_Title_OffstyleProfile"
+	{
+		"#format"	"{1:s},{2:s}"
+		"en"		"Offstyle Profile {1} [{2}]"
+	}
+	
+	// Guess best map
+	"GuessBestMapName_Title"
+	{
+		"#format"	"{1:s},{2:d}"
+		"en"		"Offstyle World Record\n "
+	}
+	"GuessBestMapName_SelectInput"
+	{
+		"#format"	"{1:s},{2:d}"
+		"en"		"Search for map '{1}'\n \nMatching maps on this server: ({2})"
+	}
+	"GuessBestMapName_NotFound"
+	{
+		"#format"	"{1:s}"
+		"en"		"{ttext}Couldn't find map(s) with '{1}'"
+	}
+}
