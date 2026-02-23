@@ -55,7 +55,7 @@ public Plugin myinfo =
 	version = "0.7"
 }
 
-#define CUSTOM_BUILD // Enables custom stuff that are not part of the public build of shavits bhoptimer
+// #define CUSTOM_BUILD // Enables custom stuff that are not part of the public build of shavits bhoptimer
 
 enum struct replay_cache_t 
 {
