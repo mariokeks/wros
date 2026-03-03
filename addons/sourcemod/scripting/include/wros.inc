@@ -25,7 +25,7 @@ enum struct WROS_RecordInfo
 	char server_key_id[32];
 }
 
-enum struct wros_style_t
+enum struct WROS_StyleInfo
 {
 	int iStyle_Offstyle;
 	int iStyle_Server;
@@ -88,7 +88,7 @@ native bool WROS_CanUseReplays(int client, bool notify = true);
  * Returns the ArrayList of the wros styles. (wros.cfg)
  * Do not close or modify the ArrayList!
  * 
- * @return                        ArrayList of the styles. (wros_style_t)
+ * @return                        ArrayList of the styles. (WROS_StyleInfo)
  */
 native ArrayList WROS_GetStyleArrayList();
 
@@ -103,12 +103,12 @@ native int WROS_GetStyleCount();
  * Gets style data at a specified index.
  * 
  * @param index                   Index of style data to get.
- * @param cpcache                 Buffer to store style data in sizeof(wros_style_t)
- * @param size                    Size of the style data buffer, e.g sizeof(wros_style_t)
+ * @param cpcache                 Buffer to store style data in sizeof(WROS_StyleInfo)
+ * @param size                    Size of the style data buffer, e.g sizeof(WROS_StyleInfo)
  * 
  * @noreturn
  */
-native void WROS_GetStyleData(int index, any[] data, int size = sizeof(wros_style_t));
+native void WROS_GetStyleData(int index, any[] data, int size = sizeof(WROS_StyleInfo));
 
 /**
  * Opens a wros menu for a player.

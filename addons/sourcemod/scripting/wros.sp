@@ -52,7 +52,7 @@ public Plugin myinfo =
 	name = "Offstyle World Record",
 	author = "rtldg & Nairda, ƤɾσƅƖeɱ?",
 	description = "Grabs WRs from the Offstyle DB API",
-	version = "0.7"
+	version = "0.7.1"
 }
 
 // #define CUSTOM_BUILD // Enables custom stuff that are not part of the public build of shavits bhoptimer
@@ -170,6 +170,7 @@ public void OnPluginStart()
 	Convar.AutoExecConfig("wros");
 
 	RegConsoleCmd("sm_wrossettings", Command_Settings, "Opens the wros settings menu.");
+	RegConsoleCmd("sm_wross", Command_Settings, "Opens the wros settings menu.");
 	RegConsoleCmd("sm_wros", Command_WROS, "View global world records from Offstyle's API.");
 	RegConsoleCmd("sm_oswr", Command_WROS, "View global world records from Offstyle's API.");
 	RegConsoleCmd("sm_wrosr", Command_WROSReplay, "View global world records from Offstyle's API.");
@@ -370,7 +371,7 @@ public Action Shavit_OnTopLeftHUD(int client, int target, char[] topleft, int to
 	}
 	else
 	{
-		wros_style_t aStyle;
+		WROS_StyleInfo aStyle;
 		gA_Styles.GetArray(gA_Styles.FindValue(gCV_DefaultStyle.IntValue, WROS_Style_Offstyle), aStyle);
 		FormatEx(ostext, sizeof(ostext), "%T", "OnTopLeftHUD_Fallback", client, sTime, info.name, aStyle.sStyleName);
 	}
@@ -391,7 +392,7 @@ void ChooseStyleMenu(int client)
 		Menu menu = new Menu(MenuHandler_ChooseStyle);
 		menu.SetTitle("%T\n ", "ChooseStyle_Title", client, gS_ClientMap[client]);
 
-		wros_style_t aStyle;
+		WROS_StyleInfo aStyle;
 		char sInfo[8], sCount[16], sDisplay[128];
 		for(int i = 0; i < iSize; i++)
 		{
@@ -492,7 +493,7 @@ void BuildWRMenu(int client, int first_item=0)
 	int maxrecords = gCV_WRCount.IntValue;
 	maxrecords = (maxrecords < records.Length) ? maxrecords : records.Length;
 
-	wros_style_t aStyle;
+	WROS_StyleInfo aStyle;
 	gA_Styles.GetArray(gA_Styles.FindValue(gI_LastStyle[client], WROS_Style_Offstyle), aStyle);
 
 	Menu menu = new Menu(MenuHandler_BuildWRMenu);
@@ -572,7 +573,7 @@ void MenuHandler_BuildWRMenu(Menu menu, MenuAction action, int client, int param
 			FormatTime(sDate, sizeof(sDate), "%Y-%m-%d %X", record.date);
 			FormatDiff(client, record.time, record.wr_time, sDiff, sizeof(sDiff));
 		
-			wros_style_t aStyle;
+			WROS_StyleInfo aStyle;
 			gA_Styles.GetArray(gA_Styles.FindValue(gI_LastStyle[client], WROS_Style_Offstyle), aStyle);
 
 			submenu.SetTitle("%T\n ", "RecordInfo_Title", client,
@@ -717,7 +718,7 @@ void BuildReplayMenu(int client, int first_item=0)
 	int maxrecords = gCV_WRCount.IntValue;
 	maxrecords = (maxrecords < records.Length) ? maxrecords : records.Length;
 
-	wros_style_t aStyle;
+	WROS_StyleInfo aStyle;
 	gA_Styles.GetArray(gA_Styles.FindValue(gI_LastStyle[client], WROS_Style_Offstyle), aStyle);
 
 	Menu menu = new Menu(MenuHandler_BuildReplayMenu);
@@ -1078,17 +1079,17 @@ int Native_GetStyleCount(Handle plugin, int numParams)
 
 int Native_GetStyleData(Handle plugin, int numParams)
 {
-	if(GetNativeCell(3) != sizeof(wros_style_t))
+	if(GetNativeCell(3) != sizeof(WROS_StyleInfo))
 	{
-		return ThrowNativeError(200, "wros_style_t does not match latest(got %i expected %i). Please update your includes and recompile your plugins", GetNativeCell(3), sizeof(wros_style_t));
+		return ThrowNativeError(200, "WROS_StyleInfo does not match latest(got %i expected %i). Please update your includes and recompile your plugins", GetNativeCell(3), sizeof(WROS_StyleInfo));
 	}
 
 	int iIndex = GetNativeCell(1);
 
-	wros_style_t aData;
-	gA_Styles.GetArray(iIndex, aData, sizeof(wros_style_t));
+	WROS_StyleInfo aData;
+	gA_Styles.GetArray(iIndex, aData, sizeof(WROS_StyleInfo));
 
-	return SetNativeArray(2, aData, sizeof(wros_style_t));
+	return SetNativeArray(2, aData, sizeof(WROS_StyleInfo));
 }
 
 int Native_GetStyleArrayList(Handle plugin, int numParams)
@@ -1632,11 +1633,11 @@ void LoadConfig()
 		SetFailState("Cannot read config file '%s'", sPath);
 	}
 
-	gA_Styles = new ArrayList(sizeof(wros_style_t));
+	gA_Styles = new ArrayList(sizeof(WROS_StyleInfo));
 
 	if(kv.GotoFirstSubKey())
 	{
-		wros_style_t aStyle;
+		WROS_StyleInfo aStyle;
 		do
 		{
 			char sBuffer[11];
