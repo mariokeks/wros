@@ -124,15 +124,6 @@ native void WROS_GetStyleData(int index, any[] data, int size = sizeof(WROS_Styl
 native void WROS_OpenMenu(int client, WROS_Menu type, const char[] map, int style = -1);
 
 /**
- * Sets the ArrayList of maps to use for the GuessBestMapNameEx to list similiar maps.
- * This clones the ArrayList via CloneHandle.
- * 
- * @param maplist                 ArrayList of maps or use "null" to delete the ArrayList.
- * @noreturn
- */
-native void WROS_SetMapList(ArrayList maplist);
-
-/**
  * Called when WROS retrieved results for a map.
  *
  * @param map                       Map name...
@@ -203,7 +194,6 @@ public void __pl_wros_SetNTVOptional()
 	MarkNativeAsOptional("WROS_QueryMap");
 	MarkNativeAsOptional("WROS_QueryMapWithFunc");
 
-	MarkNativeAsOptional("WROS_SetMapList");
 	MarkNativeAsOptional("WROS_CanUseReplays");
 	MarkNativeAsOptional("WROS_OpenMenu");
 

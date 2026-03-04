@@ -52,7 +52,7 @@ public Plugin myinfo =
 	name = "Offstyle World Record",
 	author = "rtldg & Nairda, ƤɾσƅƖeɱ?",
 	description = "Grabs WRs from the Offstyle DB API",
-	version = "0.7.1"
+	version = "0.7.2"
 }
 
 // #define CUSTOM_BUILD // Enables custom stuff that are not part of the public build of shavits bhoptimer
@@ -130,7 +130,6 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 	CreateNative("WROS_QueryMap", Native_QueryMap);
 	CreateNative("WROS_QueryMapWithFunc", Native_QueryMapWithFunc);
 
-	CreateNative("WROS_SetMapList", Native_SetMapList);
 	CreateNative("WROS_CanUseReplays", Native_CanUseReplays);
 	CreateNative("WROS_OpenMenu", Native_OpenMenu);
 
@@ -179,6 +178,7 @@ public void OnPluginStart()
 	gS_MapsCachedTime = new StringMap();
 	gSM_RecordInfo = new StringMap();
 	gSM_ReplayCount = new StringMap();
+	gA_MapList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 
 	LoadConfig();
 	gB_System2 = GetExtensionFileStatus("system2.ext") == 1;
@@ -296,6 +296,9 @@ public void OnConfigsExecuted()
 	{
 		RetrieveWRs(0, gS_CurrentMap, gA_Styles.Get(i, WROS_Style_Offstyle));
 	}
+
+	static int iMapSerial = -1;
+	ReadMapList(gA_MapList, iMapSerial, "default", MAPLIST_FLAG_CLEARARRAY);
 }
 
 Action Timer_Refresh(Handle timer, any style)
@@ -1056,17 +1059,6 @@ public any Native_QueryMapWithFunc(Handle plugin, int numParams)
 	return res;
 }
 
-void Native_SetMapList(Handle plugin, int numParams)
-{
-	ArrayList aMapList = GetNativeCell(1);
-	
-	delete gA_MapList;
-	if(aMapList != null)
-	{
-		gA_MapList = view_as<ArrayList>(CloneHandle(aMapList));
-	}
-}
-
 int Native_CanUseReplays(Handle plugin, int numParams)
 {
 	return AllowReplays(GetNativeCell(1), _, GetNativeCell(2));
@@ -1412,13 +1404,13 @@ bool GuessBestMapNameEx(int client, char last_search[PLATFORM_MAX_PATH], char se
 	TrimString(search);
 	
 	ArrayList aMaps = null;
-	if(gA_MapList != null)
-	{
-		aMaps = gA_MapList;
-	}
-	else if(gB_MapChooser)
+	if(gB_MapChooser)
 	{
 		aMaps = Shavit_GetMapsArrayList();
+	}
+	else if(gA_MapList != null)
+	{
+		aMaps = gA_MapList;
 	}
 	else
 	{
