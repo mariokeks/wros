@@ -202,7 +202,13 @@ public void __pl_wros_SetNTVOptional()
 {
 	MarkNativeAsOptional("WROS_QueryMap");
 	MarkNativeAsOptional("WROS_QueryMapWithFunc");
+
+	MarkNativeAsOptional("WROS_SetMapList");
 	MarkNativeAsOptional("WROS_CanUseReplays");
 	MarkNativeAsOptional("WROS_OpenMenu");
+
+	MarkNativeAsOptional("WROS_GetStyleCount");
+	MarkNativeAsOptional("WROS_GetStyleData");
+	MarkNativeAsOptional("WROS_GetStyleArrayList");
 }
 #endif
