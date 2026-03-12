@@ -72,7 +72,6 @@ The order of entries can be changed freely and will be reflected in the style se
 Replay access requires the `sm_wros_getreplay` permission (Ban flag, `d`). This can be overridden in `addons/sourcemod/configs/admin_overrides.cfg`:
 ```
 "sm_wros_getreplay" ""   // Allow everyone
-"sm_wros_getreplay" "0"  // Disallow everyone
 "sm_wros_getreplay" "m"  // Requires "Changing the map" permission
 ```
 See [Overriding Command Access](https://wiki.alliedmods.net/Overriding_Command_Access_(Sourcemod)) for more info.
