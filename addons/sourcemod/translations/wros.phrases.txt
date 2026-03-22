@@ -79,6 +79,10 @@
 	{
 		"en"		"Load replay"
 	}
+	"RecordInfo_Unknown"
+	{
+		"en"		"N/A"
+	}
 		
 	// Setting menu
 	"SettingItem_Offstyle"
@@ -135,23 +139,45 @@
 	{
 		"en"		"{dodgerblue}[WROS]{white} Downloading..."
 	}
-	"Chat_ReplayWrongMap"
+	"Chat_Replay_MapMismatch"
 	{
 		"#format"	"{1:s}"
 		"en"		"{dodgerblue}[WROS]{white} Cannot start replay on the current map."
+	}
+	"Chat_Replay_Unreadable"
+	{
+		"en"		"{dodgerblue}[WROS]{white} Cannot read replay file, tell an admin to check the logs!"
+	}
+	"Chat_Replay_Stopped"
+	{
+		"en"		"{dodgerblue}[WROS]{white} Stopped previous replay."
+	}
+	"Chat_Replay_Running"
+	{
+		"en"		"{dodgerblue}[WROS]{white} You already started a replay."
 	}
 	"Chat_Download_Failed"
 	{
 		"en"		"{dodgerblue}[WROS]{fullred} Failed to download the replay, tell an admin to check the logs!"
 	}
+	"Chat_Download_Queued"
+	{
+		"en"		"{dodgerblue}[WROS]{white} Replay is already downloading, playback will start automatically when ready."
+	}
 	"Chat_Download_Finished"
 	{
-		"en"		"{dodgerblue}[WROS]{white} Download finished. Starting replay..."
+		"#format"	"{1:.1f}"
+		"en"		"{dodgerblue}[WROS]{white} Download finished within {1} seconds. Starting replay..."
+		// "en"		"{dodgerblue}[WROS]{white} Download finished. Starting replay..."
 	}
 	"Chat_Download_Status"
 	{
 		"#format"	"{1:d},{2:d},{3:.2f}"
 		"en"		"{dodgerblue}[WROS]{white} Downloading.. {1} / {2} ({3}%%)"
+	}
+	"Chat_Record_NotFound"
+	{
+		"en"		"{dodgerblue}[WROS]{white} Record not found."
 	}
 	"Chat_Steam_Profile_URL"
 	{

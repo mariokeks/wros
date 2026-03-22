@@ -1,8 +1,6 @@
 /*
  * This is based on https://github.com/rtldg/wrsj
  * So most credits go to the contributors of wrsj.
- * 
- * Download stuff was taken from https://github.com/dordnung/Ingame-Map-Download
  *
  * This program is free software; you can redistribute it and/or modify it under
  * the terms of the GNU General Public License, version 3.0, as published by the
@@ -19,9 +17,9 @@
  */
 
 // TODO?
+// - Do we highlight records marked as is_banned or is_invalid or just remove them from the list?
+// - Maybe dont request every style OnConfigsExecuted? We could request styles when a player changes to a mapped style with no gSM_MapsCachedTime set
 // - Should we rename stuff? WROSDB / OSDB / Offstyle Database / Offstyle DB? Send help ( ╥ω╥ )
-// - Maybe add a "N/A" for 0 timestamp dates? There are many records without a proper date, strafe, jump etc..
-// - Reading replays only works for the shavit replay format.. not sure about other formats? Does Offstyle convert replays to the shavit format.. ?
 // - Pretty sure i forgot something.. ( ͡° ͜ʖ ͡°)
 
 #include <sourcemod>
@@ -34,6 +32,7 @@
 
 #undef REQUIRE_PLUGIN
 #include <shavit/core>
+#include <shavit/wr>
 #include <shavit/replay-playback>
 #include <shavit/replay-file>
 #include <shavit/mapchooser>
@@ -41,7 +40,7 @@
 
 #include <ripext> // https://github.com/ErikMinekus/sm-ripext
 #undef REQUIRE_EXTENSIONS
-#include <system2>
+#include <SteamWorks>
 #define REQUIRE_EXTENSIONS
 
 #pragma semicolon 1
@@ -52,10 +51,26 @@ public Plugin myinfo =
 	name = "Offstyle World Record",
 	author = "rtldg & Nairda, ƤɾσƅƖeɱ?",
 	description = "Grabs WRs from the Offstyle DB API",
-	version = "0.7.2"
+	version = "0.8.0"
 }
 
 // #define CUSTOM_BUILD // Enables custom stuff that are not part of the public build of shavits bhoptimer
+
+enum 
+{
+	Flag_CacheReplays,
+	Flag_FakeReplayCommand,
+	Flag_PurgeReplays,
+	Flag_ReplaceReplay,
+	Flag_UseSteamWorks,
+}
+
+enum 
+{
+	ReCache_None,
+	ReCache_WR,
+	ReCache_All
+}
 
 enum struct replay_cache_t 
 {
@@ -65,11 +80,14 @@ enum struct replay_cache_t
 
 enum struct download_queue_t
 {
-	int iStyle;		// Style index, 0 if not found
-	int iRequester;	// UserId of the requester
 	char sPath[PLATFORM_MAX_PATH];	// Outputfile path for the download
 	char sMap[PLATFORM_MAX_PATH];	// Mapname when we started the request, used for verification so it doesnt start the replay on another map
-	char sName[32+1]; // Used to cache the name of the record holder of the replay so we can set the replay name correctly......
+	char sName[32+1]; 		// Used to cache the name of the record holder of the replay so we can set the replay name correctly......
+	char sReplayRef[32]; 	// Reference of the Offstyle replay, used to re-download a replay on download failure
+	int iStyle;			// Style index, 0 if not found
+	int iRequester;		// UserId of the requester
+	int iRetries;		// Retry counter...
+	float fTime; 		// EngineTime when we started the download, 0.0 when it was already queued
 }
 ArrayList gA_DownloadQueue;
 
@@ -87,18 +105,19 @@ Cookie gH_Cookie;
 // Convar gCV_APIKey;
 Convar gCV_DLUrl;
 Convar gCV_DLDirectory;
-Convar gCV_PurgeReplays;
+Convar gCV_DLRetryCount;
 Convar gCV_APIUrl;
 Convar gCV_CacheTime;
 Convar gCV_WRCount;
-Convar gCV_ReplayCache;
 Convar gCV_DefaultStyle;
 Convar gCV_DefaultSettings;
 Convar gCV_AlwaysShowSelection;
+Convar gCV_ReCache;
 Convar gCV_AuthType;
+Convar gCV_Flags;
 
-StringMap gS_Maps;
-StringMap gS_MapsCachedTime;
+StringMap gSM_Maps;
+StringMap gSM_MapsCachedTime;
 StringMap gSM_RecordInfo; // Lets duplicate our data so we can search easier :3
 StringMap gSM_ReplayCount;
 StringMap gSM_ReplayCache;
@@ -116,7 +135,7 @@ GlobalForward gH_Forward_OnQueryFinished;
 GlobalForward gH_Forward_OnMenuMade; 
 GlobalForward gH_Forward_OnMenuCallback; 
 
-bool gB_System2 = false;
+bool gB_DirExists = false;
 bool gB_MapChooser = false;
 bool gB_ReplayPlayback = false;
 
@@ -147,25 +166,36 @@ public void OnPluginStart()
 	LoadTranslations("wros.phrases");
 
 	// gCV_APIKey = new Convar("os_api_key", "", "Replace with your unique api key.", FCVAR_PROTECTED);
-	gCV_PurgeReplays = new Convar("os_purge_replays", "0", "Purge the \".replays\" files inside of os_dl_directory on map start?\nDoes not affect subdirectories.", _, true, 0.0, true, 1.0);
-	gCV_DLDirectory = new Convar("os_dl_directory", "temp_replays", "Directory for the temporary replay files.\nDoes not create directories automatically.");
+	gCV_DLDirectory = new Convar("os_dl_directory", "", "Directory for the temporary replay files.\nLeave empty to disable replay feature.\nRequires a map change or server restart to take effect.\nDoes not create directories automatically.");
 	gCV_DLUrl = new Convar("os_dl_url", "https://offstyles.tommyy.dev/api/replay?id=", "Download URL. Can be changed for testing.", FCVAR_PROTECTED);
+	gCV_DLRetryCount = new Convar("os_dl_retry_count", "1", "How many times to retry a failed replay download before giving up.", 0, true, 0.0, true, 5.0);
 	gCV_APIUrl = new Convar("os_api_url", "https://offstyles.tommyy.dev/api/map?map=", "API URL. Can be changed for testing.", FCVAR_PROTECTED);
 	gCV_CacheTime = new Convar("os_api_cache_time", "666.0", "How many seconds to cache a map from the Offstyle API.", 0, true, 5.0);
 	gCV_WRCount = new Convar("os_api_wr_count", "50", "How many top times should be shown in the !wros menu.", 0, true, 0.0);
-	gCV_DefaultStyle = new Convar("os_default_style", "190", "Style ID of the website to use as default for the Top Left HUD.", 0, true, 0.0);
-	gCV_ReplayCache = new Convar("os_replay_cache", "1", "Cache replay data when loaded for a map session?", 0, true, 0.0, true, 1.0);
+	gCV_DefaultStyle = new Convar("os_default_style", "190", "(Offstyle) Style ID to use as the default for the Top Left HUD.", 0, true, 0.0);
 	gCV_AlwaysShowSelection = new Convar("os_always_show_selection", "1", "Always show the map selection menu, even if only a single matching map is found.\nYou may disable this if you have a large map list on the server.", 0, true, 0.0, true, 1.0);
-	gCV_AuthType = new Convar("os_steamid_format", "1", "SteamID format to use when displaying the SteamID of a player.\n"
-		..."1 = Steam2 (STEAM_1:1:4153990)\n"
-		..."2 = Steam3 ([U:1:8307981])\n"
-		..."3 = SteamID64 (76561197968573709)", 0, true, 1.0, true, 3.0);
-	gCV_DefaultSettings = new Convar("os_default_settings", "23", "Default settings as a bitflag\n"
-		..."Setting_TopLeftHUD			1\n"
-		..."Setting_EveryStyle			2\n"
-		..."Setting_AfterTopLeft		4\n"
-		..."Setting_ShowOnlyDefault		8\n"
-		..."Setting_FallbackToDefault	16\n");
+	gCV_Flags = new Convar("os_flags", "3", "Miscellaneous options as bitflag"
+		..."\n1 = Cache replay data for the map session"
+		..."\n2 = Execute 'sm_replay' for the player after replay start"
+		..."\n4 = Purge \".replays\" files inside of os_dl_directory on map start (Does not affect subdirectories)"
+		..."\n8 = Replace a running replay bot instead of notifying the player"
+		..."\n16 = Use the SteamWorks extension for API requests (Recommended for windows)", 0, true, 0.0);
+	gCV_ReCache = new Convar("os_recache", "2", "Re-cache a map & style"
+		..."\n0 = Disabled"
+		..."\n1 = Only when a WR is being broken"
+		..."\n2 = For every improved record"
+		..."\nBonus tracks are always ignored."
+		..."\nStyles with no valid server style (style_server) set in the config are ignored.", 0, true, 0.0, true, 2.0);
+	gCV_AuthType = new Convar("os_steamid_format", "1", "SteamID format to use when displaying the SteamID of a player"
+		..."\n1 = Steam2 (STEAM_1:1:4153990)"
+		..."\n2 = Steam3 ([U:1:8307981])"
+		..."\n3 = SteamID64 (76561197968573709)", 0, true, 1.0, true, 3.0);
+	gCV_DefaultSettings = new Convar("os_default_settings", "23", "Default settings as a bitflag"
+		..."\n1 = Enable the OS time (Top Left HUD)"
+		..."\n2 = Show the OS time in every style"
+		..."\n4 = Show the OS time after the WR/PB lines"
+		..."\n8 = Always show the default style time, regardless of the current style"
+		..."\n16 = Fall back to the default style time (with style name shown) when no time is available for the current style", 0, true, 0.0);	
 	Convar.AutoExecConfig("wros");
 
 	RegConsoleCmd("sm_wrossettings", Command_Settings, "Opens the wros settings menu.");
@@ -174,17 +204,30 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_oswr", Command_WROS, "View global world records from Offstyle's API.");
 	RegConsoleCmd("sm_wrosr", Command_WROSReplay, "View global world records from Offstyle's API.");
 
-	gS_Maps = new StringMap();
-	gS_MapsCachedTime = new StringMap();
+	gSM_Maps = new StringMap();
+	gSM_MapsCachedTime = new StringMap();
 	gSM_RecordInfo = new StringMap();
 	gSM_ReplayCount = new StringMap();
 	gA_MapList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 
 	LoadConfig();
-	gB_System2 = GetExtensionFileStatus("system2.ext") == 1;
 	
 	SetCookieMenuItem(MenuHandler_Cookie, 0, "wros");
 	gH_Cookie = new Cookie("wros", "Offstyle World Record Settings", CookieAccess_Private);
+}
+
+public void OnPluginEnd()
+{
+	// Delete all incomplete replays so the plugin download them again 
+	if(gA_DownloadQueue	!= null)
+	{
+		download_queue_t aQueue;
+		for(int i = gA_DownloadQueue.Length - 1; i >= 0; i--)
+		{
+			gA_DownloadQueue.GetArray(i, aQueue);
+			DeleteFile(aQueue.sPath);
+		}
+	}
 }
 
 public void OnLibraryAdded(const char[] name)
@@ -221,13 +264,13 @@ public void OnMapStart()
 	ArrayList records;
 	WROS_RecordInfo record;
 	char sKey[PLATFORM_MAX_PATH];
-	StringMapSnapshot snapshot = gS_Maps.Snapshot();
+	StringMapSnapshot snapshot = gSM_Maps.Snapshot();
 	for(int i = snapshot.Length - 1; i >= 0; i--)
 	{
 		snapshot.GetKey(i, sKey, sizeof(sKey));
 		
-		gS_Maps.GetValue(sKey, records);
-		gS_MapsCachedTime.GetValue(sKey, cached_time);
+		gSM_Maps.GetValue(sKey, records);
+		gSM_MapsCachedTime.GetValue(sKey, cached_time);
 
 		if(cached_time <= (GetEngineTime() - gCV_CacheTime.FloatValue))
 		{
@@ -238,7 +281,8 @@ public void OnMapStart()
 			}
 
 			delete records;
-			gS_Maps.Remove(sKey);
+			gSM_Maps.Remove(sKey);
+			gSM_MapsCachedTime.Remove(sKey);
 		}
 	}
 	delete snapshot;
@@ -259,12 +303,30 @@ public void OnMapStart()
 	}
 }
 
-public void OnMapEnd()
+public void OnConfigsExecuted()
 {
-	if(gCV_PurgeReplays.BoolValue)
+	// For now load everything
+	int iSize = gA_Styles.Length;
+	for(int i = 0; i < iSize; i++)
 	{
-		char sDirectory[PLATFORM_MAX_PATH];
-		gCV_DLDirectory.GetString(sDirectory, sizeof(sDirectory));
+		RetrieveWRs(0, gS_CurrentMap, gA_Styles.Get(i, WROS_Style_Offstyle));
+	}
+
+	static int iMapSerial = -1;
+	ReadMapList(gA_MapList, iMapSerial, "default", MAPLIST_FLAG_CLEARARRAY);
+
+	char sDirectory[PLATFORM_MAX_PATH];
+	gCV_DLDirectory.GetString(sDirectory, sizeof(sDirectory));
+	if(sDirectory[0] == '\0')
+	{
+		gB_DirExists = false; // Disables replay features
+	}
+	else if(!(gB_DirExists = DirExists(sDirectory)))
+	{
+		LogError("Directory '%s' does not exist. Please create the directory or change the convar os_dl_directory.", sDirectory);
+	}
+	else if(gB_DirExists && IsFlagEnabled(Flag_PurgeReplays))
+	{
 		
 		DirectoryListing hDir = OpenDirectory(sDirectory);
 		if(hDir != null)
@@ -288,42 +350,28 @@ public void OnMapEnd()
 	}
 }
 
-public void OnConfigsExecuted()
-{
-	// For now load everything
-	int iSize = gA_Styles.Length;
-	for(int i = 0; i < iSize; i++)
-	{
-		RetrieveWRs(0, gS_CurrentMap, gA_Styles.Get(i, WROS_Style_Offstyle));
-	}
-
-	static int iMapSerial = -1;
-	ReadMapList(gA_MapList, iMapSerial, "default", MAPLIST_FLAG_CLEARARRAY);
-}
-
 Action Timer_Refresh(Handle timer, any style)
 {
 	RetrieveWRs(0, gS_CurrentMap, style);
 	return Plugin_Stop;
 }
 
-public void Shavit_OnWorldRecord(int client, int style, float time, int jumps, int strafes, float sync, int track)
+public void Shavit_OnFinish_Post(int client, int style, float time, int jumps, int strafes, float sync, int rank, int overwrite, int track)
 {
 	if(track > Track_Main)
 		return;
 
-	// As it is now this wont refresh the cache when there never was a record
-	ArrayList records;
-	if(!GetCachedRecords(gS_CurrentMap, WROS_ConvertStyle(style, WROS_Style_Server, WROS_Style_Offstyle), records))
-		return;
-
-	WROS_RecordInfo info;
-	records.GetArray(0, info);
-
-	if(time < info.time)
+	if(gCV_ReCache.IntValue == ReCache_All || (gCV_ReCache.IntValue == ReCache_WR && time == Shavit_GetWorldRecord(style, track)))
 	{
-		// Maybe add a limitation or restart the timer when its already running?
-		CreateTimer(5.0, Timer_Refresh, info.style, TIMER_FLAG_NO_MAPCHANGE);
+		// I think its better to recache the records when we got a new WR/PB
+		// So that players dont ask why WROS is broken :tableflip:
+
+		int iStyle = WROS_ConvertStyle(style, WROS_Style_Server, WROS_Style_Offstyle);
+		if(iStyle != -1)
+		{
+			// Maybe restart the timer when its already running?
+			CreateTimer(5.0, Timer_Refresh, iStyle, TIMER_FLAG_NO_MAPCHANGE);
+		}
 	}
 }
 
@@ -426,7 +474,7 @@ void GetRecordCount(WROS_Menu type, const char[] map, int style, char[] output, 
 	ArrayList aRecords;
 	char sKey[PLATFORM_MAX_PATH];
 	FormatEx(sKey, sizeof(sKey), "%d%s", style, map);
-	if(!gS_Maps.GetValue(sKey, aRecords))
+	if(!gSM_Maps.GetValue(sKey, aRecords))
 	{
 		strcopy(output, maxlen, "?");
 	}
@@ -541,13 +589,16 @@ void MenuHandler_BuildWRMenu(Menu menu, MenuAction action, int client, int param
 		case MenuAction_End: delete menu;
 		case MenuAction_Cancel:
 		{
-			if(gA_Styles.Length > 1)
+			if(param2 == MenuCancel_ExitBack)
 			{
-				ChooseStyleMenu(client);
-			}
-			else if(gS_LastSearch[client][0] != '\0')
-			{
-				GuessBestMapNameEx(client, gS_LastSearch[client], gS_LastSearch[client], gS_ClientMap[client], MenuHandler_SelectMap);
+				if(gA_Styles.Length > 1)
+				{
+					ChooseStyleMenu(client);
+				}
+				else if(gS_LastSearch[client][0] != '\0')
+				{
+					GuessBestMapNameEx(client, gS_LastSearch[client], gS_LastSearch[client], gS_ClientMap[client], MenuHandler_SelectMap);
+				}
 			}
 		}
 		case MenuAction_Select:
@@ -561,8 +612,10 @@ void MenuHandler_BuildWRMenu(Menu menu, MenuAction action, int client, int param
 			}
 
 			WROS_RecordInfo record;
-			if(!GetRecordInfo(sInfo, record))
+			if(!GetRecordInfo(sInfo, record)) // Probably a recache and a record has been improved..?
 			{
+				CPrintToChat(client, "%T", "Chat_Record_NotFound", client);
+				BuildWRMenu(client);
 				return;
 			}
 
@@ -573,7 +626,14 @@ void MenuHandler_BuildWRMenu(Menu menu, MenuAction action, int client, int param
 
 			char sDisplay[128], sDate[32], sTime[32], sDiff[32];
 			FormatSeconds(record.time, sTime, sizeof(sTime));
-			FormatTime(sDate, sizeof(sDate), "%Y-%m-%d %X", record.date);
+			if(record.date != 0) 
+			{
+				FormatTime(sDate, sizeof(sDate), "%Y-%m-%d %X", record.date);
+			}
+			else // Why you do this :(
+			{
+				FormatEx(sDate, sizeof(sDate), "%T", "RecordInfo_Unknown", client);
+			}
 			FormatDiff(client, record.time, record.wr_time, sDiff, sizeof(sDiff));
 		
 			WROS_StyleInfo aStyle;
@@ -607,49 +667,55 @@ void MenuHandler_BuildWRMenu(Menu menu, MenuAction action, int client, int param
 	}
 }
 
-int MenuHandler_RecordInfo(Menu menu, MenuAction action, int client, int choice)
+int MenuHandler_RecordInfo(Menu menu, MenuAction action, int client, int param2)
 {
 	static bool DONT_CLOSE_MENU = false;
 
-	if(action == MenuAction_Select)
+	switch(action)
 	{
-		char info[PLATFORM_MAX_PATH];
-		menu.GetItem(choice, info, sizeof(info));
-
-		if(!info[0])
+		case MenuAction_End: 
 		{
-			return 0;
+			if(!DONT_CLOSE_MENU)
+				delete menu;
+			DONT_CLOSE_MENU = false;
 		}
-
-		switch(info[0])
+		case MenuAction_Cancel:
 		{
-			case '1', '2': 
+			if(param2 == MenuCancel_ExitBack)
 			{
-				DataPack pack = new DataPack();
-				pack.WriteString(info[1]);
-				info[1] = '\0';
-				pack.WriteCell(StringToInt(info[0]));
-
-				QueryClientConVar(client, "cl_disablehtmlmotd", Query_Disablehtmlmotd, pack);
-			}
-			case '3':
-			{
-				GetReplay(client, info[1]);
+				BuildWRMenu(client, gI_CurrentPagePosition[client]);
 			}
 		}
+		case MenuAction_Select:
+		{
+			char info[PLATFORM_MAX_PATH];
+			menu.GetItem(param2, info, sizeof(info));
 
-		DONT_CLOSE_MENU = true;
-		menu.Display(client, MENU_TIME_FOREVER);
-	}
-	else if(action == MenuAction_Cancel && choice == MenuCancel_ExitBack)
-	{
-		BuildWRMenu(client, gI_CurrentPagePosition[client]);
-	}
-	else if(action == MenuAction_End)
-	{
-		if(!DONT_CLOSE_MENU)
-			delete menu;
-		DONT_CLOSE_MENU = false;
+			if(!info[0])
+			{
+				return 0;
+			}
+
+			switch(info[0])
+			{
+				case '1', '2': 
+				{
+					DataPack pack = new DataPack();
+					pack.WriteString(info[1]);
+					info[1] = '\0';
+					pack.WriteCell(StringToInt(info[0]));
+
+					QueryClientConVar(client, "cl_disablehtmlmotd", Query_Disablehtmlmotd, pack);
+				}
+				case '3':
+				{
+					GetReplay(client, info[1]);
+				}
+			}
+
+			DONT_CLOSE_MENU = true;
+			menu.Display(client, MENU_TIME_FOREVER);
+		}
 	}
 
 	return 0;
@@ -746,9 +812,12 @@ void BuildReplayMenu(int client, int first_item=0)
 		menu.AddItem("-1", sDisplay);
 	}
 
-	
 	menu.ExitBackButton = (gA_Styles.Length > 1) ? true : (gS_LastSearch[client][0] != '\0');
-	menu.DisplayAt(client, first_item, MENU_TIME_FOREVER);
+	
+	if(Forward_OnMenuMade(client, WROS_Menu_Replays, menu))
+	{
+		menu.DisplayAt(client, first_item, MENU_TIME_FOREVER);
+	}
 }
 
 void MenuHandler_BuildReplayMenu(Menu menu, MenuAction action, int client, int param2)
@@ -763,13 +832,16 @@ void MenuHandler_BuildReplayMenu(Menu menu, MenuAction action, int client, int p
 		case MenuAction_End: delete menu;
 		case MenuAction_Cancel:
 		{
-			if(gA_Styles.Length > 1)
+			if(param2 == MenuCancel_ExitBack)
 			{
-				ChooseStyleMenu(client);
-			}
-			else if(gS_LastSearch[client][0] != '\0')
-			{
-				GuessBestMapNameEx(client, gS_LastSearch[client], gS_LastSearch[client], gS_ClientMap[client], MenuHandler_SelectMap);
+				if(gA_Styles.Length > 1)
+				{
+					ChooseStyleMenu(client);
+				}
+				else if(gS_LastSearch[client][0] != '\0')
+				{
+					GuessBestMapNameEx(client, gS_LastSearch[client], gS_LastSearch[client], gS_ClientMap[client], MenuHandler_SelectMap);
+				}
 			}
 		}
 		case MenuAction_Select:
@@ -792,8 +864,11 @@ void MenuHandler_BuildReplayMenu(Menu menu, MenuAction action, int client, int p
 
 ArrayList CacheMap(char mapname[PLATFORM_MAX_PATH], JSONArray json, int style)
 {
+	char sKey[PLATFORM_MAX_PATH];
+	FormatEx(sKey, sizeof(sKey), "%d%s", style, mapname);
+
 	ArrayList records;
-	if(GetCachedRecords(mapname, style, records))
+	if(gSM_Maps.GetValue(sKey, records))
 	{
 		WROS_RecordInfo record;
 		for(int x = records.Length - 1; x >= 0; x--)
@@ -806,10 +881,8 @@ ArrayList CacheMap(char mapname[PLATFORM_MAX_PATH], JSONArray json, int style)
 
 	records = new ArrayList(sizeof(WROS_RecordInfo));
 
-	char sKey[PLATFORM_MAX_PATH];
-	FormatEx(sKey, sizeof(sKey), "%d%s", style, mapname);
-	gS_MapsCachedTime.SetValue(sKey, GetEngineTime(), true);
-	gS_Maps.SetValue(sKey, records, true);
+	gSM_MapsCachedTime.SetValue(sKey, GetEngineTime(), true);
+	gSM_Maps.SetValue(sKey, records, true);
 
 	int iSize = json.Length, iReplays;
 	for(int i = 0; i < iSize; i++)
@@ -856,7 +929,30 @@ ArrayList CacheMap(char mapname[PLATFORM_MAX_PATH], JSONArray json, int style)
 	return records;
 }
 
-void RequestCallback(HTTPResponse response, DataPack pack, const char[] error)
+void RIP_Request_Callback(HTTPResponse response, DataPack pack, const char[] error)
+{
+	bool bSuccess = (response.Status == HTTPStatus_OK);
+	HandleRequest(pack, bSuccess ? view_as<JSONArray>(response.Data) : null, bSuccess, false, response.Status, error);
+}
+
+public void SteamWorks_Request_Callback(Handle request, bool bFailure, bool bRequestSuccessful, EHTTPStatusCode eStatusCode, DataPack pack)
+{
+	if (bFailure || !bRequestSuccessful || eStatusCode != k_EHTTPStatusCode200OK)
+	{
+		HandleRequest(pack, null, false, true, eStatusCode);
+		return;
+	}
+
+	SteamWorks_GetHTTPResponseBodyCallback(request, SteamWorks_RequestBody_Callback, pack);
+	delete request;
+}
+
+void SteamWorks_RequestBody_Callback(const char[] data, DataPack pack)
+{
+	HandleRequest(pack, JSONArray.FromString(data), true, true);
+}
+
+void HandleRequest(DataPack pack, JSONArray records, bool success, bool steamworks, int status = -1, const char[] error = "")
 {
 	pack.Reset();
 
@@ -866,31 +962,36 @@ void RequestCallback(HTTPResponse response, DataPack pack, const char[] error)
 	int style = pack.ReadCell();
 	WROS_Menu menu = pack.ReadCell();
 
-	DataPack AAAAA = pack.ReadCell();
+	DataPack callback_pack = pack.ReadCell();
 
 	CloseHandle(pack);
 
 	//PrintToChat(client, "status = %d, error = '%s'", response.Status, error);
-	if(response.Status != HTTPStatus_OK)
+	if(!success)
 	{
 		CallOnQueryFinishedCallback(mapname, null, style);
-		if(AAAAA)
-			CallOnQueryFinishedWithFunctionCallback(mapname, null, AAAAA);
+		if(callback_pack)
+			CallOnQueryFinishedWithFunctionCallback(mapname, null, callback_pack);
 
 		if(client != 0)
 			PrintToChat(client, "[WROS] Offstyle API request failed (%s)", mapname);
-		LogError("WROS: Offstyle API request failed (%s)", mapname);
+		if(status != -1) // Exclude when called from RetrieveWRs directly
+			LogError("(%s) Offstyle API request failed (%s) status %d", steamworks ? "SteamWorks" : "SM-RIP", mapname, status);
+		if(error[0] != '\0')
+			LogError("%s", error);
 		return;
 	}
-
-	JSONArray records = view_as<JSONArray>(response.Data);
 
 	ArrayList records2 = CacheMap(mapname, records, style);
 
 	// the records handle is closed by ripext post-callback
+	if(steamworks)
+	{
+		delete records;		
+	}
 
-	if(AAAAA)
-		CallOnQueryFinishedWithFunctionCallback(mapname, records2, AAAAA);
+	if(callback_pack)
+		CallOnQueryFinishedWithFunctionCallback(mapname, records2, callback_pack);
 
 	if(client != 0)
 	{
@@ -904,6 +1005,7 @@ void RequestCallback(HTTPResponse response, DataPack pack, const char[] error)
 			case WROS_Menu_Replays: BuildReplayMenu(client);
 		}
 	}
+
 }
 
 bool RetrieveWRs(int client, const char[] mapname, int style, int menu = WROS_Menu_Records, DataPack MOREPACKS=null)
@@ -934,11 +1036,34 @@ bool RetrieveWRs(int client, const char[] mapname, int style, int menu = WROS_Me
 	pack.WriteCell(MOREPACKS);
 
 	// https://offstyles.tommyy.dev/api/map?map=bhop_arcane_v1&style=190&limit=50&page=1
-	Format(apiurl, sizeof(apiurl), "%s%s&style=%d", apiurl, mapname, style); 
+	Format(apiurl, sizeof(apiurl), "%s%s&style=%d&limit=%d", apiurl, mapname, style, gCV_WRCount.IntValue); 
 
-	HTTPRequest http = new HTTPRequest(apiurl);
-	// http.SetHeader("api-key", "%s", apikey);
-	http.Get(RequestCallback, pack);
+	if(!IsFlagEnabled(Flag_UseSteamWorks))
+	{
+		HTTPRequest http = new HTTPRequest(apiurl);
+		// http.SetHeader("api-key", "%s", apikey);
+		http.Get(RIP_Request_Callback, pack);
+		return true;
+	}
+
+	// From shavit-zones-http.sp
+	Handle hRequest;
+	if (!(hRequest = SteamWorks_CreateHTTPRequest(k_EHTTPMethodGET, apiurl))
+	//   || (apikey[0] && !SteamWorks_SetHTTPRequestHeaderValue(hRequest, "api-key", apikey))
+	  || !SteamWorks_SetHTTPRequestHeaderValue(hRequest, "accept", "application/json")
+	//   || !(!apikey[0] || SteamWorks_SetHTTPRequestHeaderValue(hRequest, "api-key", apikey))
+	//   || !SteamWorks_SetHTTPRequestHeaderValue(hRequest, "map", mapname)
+	  || !SteamWorks_SetHTTPRequestContextValue(hRequest, pack)
+	  || !SteamWorks_SetHTTPRequestAbsoluteTimeoutMS(hRequest, 4000)
+	//|| !SteamWorks_SetHTTPRequestRequiresVerifiedCertificate(hRequest, true)
+	  || !SteamWorks_SetHTTPCallbacks(hRequest, SteamWorks_Request_Callback)
+	  || !SteamWorks_SendHTTPRequest(hRequest)
+	)
+	{
+		delete hRequest;
+		HandleRequest(pack, null, false, true, _, "Failed to setup & send HTTP request");
+		return false;
+	}
 
 	return true;
 }
@@ -990,14 +1115,6 @@ Action WROSCommand(int client, int args, WROS_Menu menu)
 
 }
 
-stock void LowercaseStringxx(char[] str)
-{
-	for (int i = 0; str[i] != 0; i++)
-	{
-		str[i] = CharToLower(str[i]);
-	}
-}
-
 bool GetRecordInfo(const char[] id, WROS_RecordInfo info)
 {
 	return gSM_RecordInfo.GetArray(id, info, sizeof(info));
@@ -1007,7 +1124,7 @@ public any Native_QueryMap(Handle plugin, int numParams)
 {
 	char map[PLATFORM_MAX_PATH];
 	GetNativeString(1, map, sizeof(map));
-	LowercaseStringxx(map);
+	LowercaseString(map);
 
 	bool cache_okay = GetNativeCell(2);
 	int style = GetNativeCell(3);
@@ -1016,21 +1133,21 @@ public any Native_QueryMap(Handle plugin, int numParams)
 	{
 		ArrayList records;
 
-		if(gS_Maps.GetValue(map, records) && records && records.Length)
+		if(gSM_Maps.GetValue(map, records) && records && records.Length)
 		{
 			CallOnQueryFinishedCallback(map, records, style);
 			return true;
 		}
 	}
 
-	return RetrieveWRs(0, map, style);
+	return RetrieveWRs(0, map, style, 0);
 }
 
 public any Native_QueryMapWithFunc(Handle plugin, int numParams)
 {
 	char map[PLATFORM_MAX_PATH];
 	GetNativeString(1, map, sizeof(map));
-	LowercaseStringxx(map);
+	LowercaseString(map);
 
 	bool cache_okay = GetNativeCell(2);
 	int style = GetNativeCell(3);
@@ -1044,14 +1161,14 @@ public any Native_QueryMapWithFunc(Handle plugin, int numParams)
 	{
 		ArrayList records;
 
-		if(gS_Maps.GetValue(map, records) && records && records.Length)
+		if(gSM_Maps.GetValue(map, records) && records && records.Length)
 		{
 			CallOnQueryFinishedWithFunctionCallback(map, records, data);
 			return true;
 		}
 	}
 
-	bool res = RetrieveWRs(0, map, style, data);
+	bool res = RetrieveWRs(0, map, style, 0, data);
 
 	if(!res)
 		delete data;
@@ -1118,7 +1235,7 @@ int Native_OpenMenu(Handle plugin, int numParams)
 			return true;
 	}
 
-	if(style != -1 || gA_Styles.Length > 1)
+	if(style == -1 && gA_Styles.Length > 1)
 	{
 		ChooseStyleMenu(client);
 	}
@@ -1177,6 +1294,11 @@ bool IsSettingEnabled(int client, int setting)
 	return view_as<bool>((1<<setting) & gI_ClientSettings[client]);
 }
 
+bool IsFlagEnabled(int flag)
+{
+	return ((gCV_Flags.IntValue & (1<<flag)) != 0); // We could add the flags as input and replace IsSettingEnabled but lets keep it for now
+}
+
 void AddSettingItem(Menu menu, int client, int hud, char[] translation)
 {
 	char sInfo[16], sDisplay[64];
@@ -1203,36 +1325,49 @@ bool GetReplay(int client, const char[] id)
 	WROS_RecordInfo record;
 	if(!GetRecordInfo(id, record))
 	{
+		LogError("Could not find record info for '%s'", id);
 		return false;
 	}
 
 	if(!StrEqual(record.map, gS_CurrentMap, false))
 	{
-		CPrintToChat(client, "%T", "Chat_ReplayWrongMap", client, record.map);
+		CPrintToChat(client, "%T", "Chat_Replay_MapMismatch", client, record.map);
 		return false;
+	}
+
+	// Convert our offstyle style to a timer style for the replay "style_replay"
+	int iReplayStyle = WROS_ConvertStyle(record.style, WROS_Style_Offstyle, WROS_Style_Replay);
+	if(iReplayStyle == -1)
+	{
+		CPrintToChat(client, "%T", "Chat_NoAccess_ReplayStyle", client);
+		return false; // Disabled
 	}
 
 	char sOutputFile[PLATFORM_MAX_PATH];
 	gCV_DLDirectory.GetString(sOutputFile, sizeof(sOutputFile));
 	Format(sOutputFile, sizeof(sOutputFile), "%s/%s.replay", sOutputFile, record.replay_ref);
 
-	// Convert our offstyle style to a timer style for the replay "style_replay"
-	int iReplayStyle = WROS_ConvertStyle(record.style, WROS_Style_Offstyle, WROS_Style_Replay);
-	if(iReplayStyle == -1)
-	{
-		return false; // Disabled
-	}
+	bool bQueued = (gA_DownloadQueue != null && gA_DownloadQueue.FindString(sOutputFile, 0) != -1);
 
-	if(FileExists(sOutputFile))
+	if(!bQueued && FileExists(sOutputFile))
 	{
-		StartReplay(client, iReplayStyle, sOutputFile, record.name);
-		return true;
+		return StartReplay(client, iReplayStyle, sOutputFile, record.name);
+	}
+	else if(bQueued)
+	{
+		download_queue_t aQueue;
+		int iSize = gA_DownloadQueue.Length, iUserID = GetClientUserId(client);
+		for(int i = 0; i < iSize; i++)
+		{
+			gA_DownloadQueue.GetArray(i, aQueue);
+			if(aQueue.iRequester == iUserID && StrEqual(sOutputFile, aQueue.sPath))
+			{
+				CPrintToChat(client, "%T", "Chat_Download_Queued", client);
+				return false;
+			}
+		}
 	}
 	
-	char sURL[128];
-	gCV_DLUrl.GetString(sURL, sizeof(sURL));
-	StrCat(sURL, sizeof(sURL), record.replay_ref);
-
 	if(gA_DownloadQueue == null)
 	{
 		gA_DownloadQueue = new ArrayList(sizeof(download_queue_t));
@@ -1244,64 +1379,104 @@ bool GetReplay(int client, const char[] id)
 	aQueue.sMap = gS_CurrentMap;
 	aQueue.iStyle = iReplayStyle;
 	aQueue.sName = record.name;
+	aQueue.sReplayRef = record.replay_ref;
+	aQueue.fTime = bQueued ? 0.0 : GetEngineTime();
 	gA_DownloadQueue.PushArray(aQueue);
 
-	System2HTTPRequest downloadRequest = new System2HTTPRequest(OnDownloadFinished, "%s", sURL);
-	// downloadRequest.SetProgressCallback(OnDownloadUpdate);
-	downloadRequest.SetOutputFile("%s", sOutputFile);
-	downloadRequest.GET();
-	delete downloadRequest;
-
-	CPrintToChat(client, "%T", "Chat_Downloading", client);
-
-	return true; // Request send
-}
-
-// public void OnDownloadUpdate(System2HTTPRequest request, int dlTotal, int dlNow, int ulTotal, int ulNow)
-// {
-// 	download_queue_t aQueue;
-// 	gA_DownloadQueue.GetArray(0, aQueue);
-
-// 	int client = GetClientOfUserId(aQueue.iRequester);
-// 	if(client && StrEqual(aQueue.sMap, gS_CurrentMap))
-// 	{
-// 		CPrintToChat(client, "%T", "Chat_Download_Status", client, dlNow, dlTotal, dlTotal ? ((dlNow / dlTotal) * 100.0) : 0.0);
-// 	}
-// }
-
-public void OnDownloadFinished(bool success, const char[] error, System2HTTPRequest request, System2HTTPResponse response, HTTPRequestMethod method)
-{
-	char detailError[256];
-
-	// Response 200 expected
-	if(success && response.StatusCode != 200)
+	if(!bQueued)
 	{
-		success = false;
-		Format(detailError, sizeof(detailError), "Expected HTTP status code 200, but got %d", response.StatusCode);
+		DownloadReplay(aQueue);
+		CPrintToChat(client, "%T", "Chat_Downloading", client);
 	}
 	else
 	{
-		strcopy(detailError, sizeof(detailError), error);
+		CPrintToChat(client, "%T", "Chat_Download_Queued", client);
 	}
 
+	return true; // Request send or queued
+}
+
+void DownloadReplay(download_queue_t queue)
+{
+	char sURL[128];
+	gCV_DLUrl.GetString(sURL, sizeof(sURL));
+	StrCat(sURL, sizeof(sURL), queue.sReplayRef);
+
+	DataPack hPack = new DataPack();
+	hPack.WriteString(queue.sPath);
+
+	// Does this have the same issue on windows too???
+	// I cannot think of another method to download stuff async :tableflip:
+	HTTPRequest hRequest = new HTTPRequest(sURL);
+	hRequest.DownloadFile(queue.sPath, OnDownloadFinished_Callback, hPack);
+}
+
+void OnDownloadFinished_Callback(HTTPStatus status, any value, const char[] error)
+{
+	DataPack hPack = view_as<DataPack>(value);
+	hPack.Reset();
 	char sOutputFile[PLATFORM_MAX_PATH];
+	hPack.ReadString(sOutputFile, sizeof(sOutputFile));
+	delete hPack;
+
+	bool bSuccess = true;
+	if(status != HTTPStatus_OK)
+	{
+		bSuccess = false;
+		LogError("Expected HTTP status code 200, but got %d", status);
+		if(error[0] != '\0')
+		{
+			LogError("%s", error);
+		}
+	}
+
+	// Assuming the OS is windows and the replay did only partially download..............................
+	// Im not really familiar with failures for downloads in the first place maybe someone else knows how to catch errors correctly
+	// Error: h2_process_pending_input: nghttp2_session_mem_recv() returned -2561650531219013632:Success
+	if(IsFlagEnabled(Flag_UseSteamWorks) && strncmp(error, "h2_process_pending_input", 24) == 0)
+	{
+		bSuccess = false;
+	}
+	// Maybe check if the replay is valid by the frame size?
 
 	download_queue_t aQueue;
-	gA_DownloadQueue.GetArray(0, aQueue);
-	sOutputFile = aQueue.sPath;
+	int iIndex = gA_DownloadQueue.FindString(sOutputFile, 0);
+	if(iIndex == -1)
+	{
+		LogError("Could not find replay file '%s' in the download queue.", sOutputFile);
+		return; // ???
+	}
+	gA_DownloadQueue.GetArray(iIndex, aQueue);
 
+	// Delete file on failure
+	if(!bSuccess)
+	{
+		DeleteFile(sOutputFile);
+
+		if(++aQueue.iRetries <= gCV_DLRetryCount.IntValue)
+		{
+			// We dont update aQueue.fTime here to get the total time it took
+			gA_DownloadQueue.SetArray(iIndex, aQueue);
+			DownloadReplay(aQueue);
+			return;
+		}
+	}
+
+	gA_DownloadQueue.Erase(iIndex);
+
+	float fTimeElapsed = GetEngineTime() - aQueue.fTime;
 	int client = GetClientOfUserId(aQueue.iRequester);
-	DownloadFinished(client, success, detailError, aQueue, true);
-	gA_DownloadQueue.Erase(0);
+	DownloadFinished(client, bSuccess, aQueue, fTimeElapsed);
 
 	// Check if someone else already requested it and trigger the same 
+	// Maybe add an option to handle behavior? Like dont start the same replay for another play just notify him?
 	for(int i = gA_DownloadQueue.Length - 1; i >= 0; i--)
 	{
 		gA_DownloadQueue.GetArray(i, aQueue);
 		if(StrEqual(aQueue.sPath, sOutputFile))
 		{
 			client = GetClientOfUserId(aQueue.iRequester);
-			DownloadFinished(client, success, detailError, aQueue, false);
+			DownloadFinished(client, bSuccess, aQueue, fTimeElapsed);
 			gA_DownloadQueue.Erase(i);
 		}
 	}
@@ -1312,32 +1487,45 @@ public void OnDownloadFinished(bool success, const char[] error, System2HTTPRequ
 	}
 }
 
-void DownloadFinished(int client, bool success, const char[] error, download_queue_t queue, bool log)
+void DownloadFinished(int client, bool success, download_queue_t queue, float time_elapsed)
 {
-	// Finished with Error?
-	if(!success)
+	if(client)
 	{
-		if(client)
+		if(!success)
 		{
 			CPrintToChat(client, "%T", "Chat_Download_Failed", client);
 		}
-		if(log)
+		else if(StrEqual(queue.sMap, gS_CurrentMap))
 		{
-			LogError("Failed. (%s)", error);
+			CPrintToChat(client, "%T", "Chat_Download_Finished", client, time_elapsed);
+			StartReplay(client, queue.iStyle, queue.sPath, queue.sName);
 		}
-	}
-	else if(client && StrEqual(queue.sMap, gS_CurrentMap))
-	{
-		CPrintToChat(client, "%T", "Chat_Download_Finished", client);
-		StartReplay(client, queue.iStyle, queue.sPath, queue.sName);
 	}
 }
 
 bool StartReplay(int client, int style, const char[] path, const char[] replay_name)
 {
+	// Check if the player already has a running bot...
+	for(int i = 1; i <= MaxClients; i++)
+	{
+		if(IsClientInGame(i) && IsFakeClient(i) && Shavit_GetReplayStarter(i) == client)
+		{
+			if(!IsFlagEnabled(Flag_ReplaceReplay))
+			{
+				CPrintToChat(client, "%T", "Chat_Replay_Running", client);
+				return false;
+			}
+			else
+			{
+				KickClientEx(i, "You shall not stay!"); // Thats not really nice.. Shavit_StopReplay where?
+				CPrintToChat(client, "%T", "Chat_Replay_Stopped", client);
+			}
+		}
+	}
+
 	bool bFound = false;
 	replay_cache_t aCache; // null cache
-	if(gCV_ReplayCache.BoolValue)
+	if(IsFlagEnabled(Flag_CacheReplays))
 	{
 		if(gSM_ReplayCache == null)
 		{
@@ -1351,7 +1539,7 @@ bool StartReplay(int client, int style, const char[] path, const char[] replay_n
 	{
 		if(!LoadReplayCache2(aCache.aHeader, aCache.aFrameCache, path, aCache.aHeader.sMap))
 		{
-			// Shavit_PrintToChat(client, "%T", "FailedToCreateReplay", client);
+			CPrintToChat(client, "%T", "Chat_Replay_Unreadable", client);
 			return false;
 		}
 		else
@@ -1363,7 +1551,7 @@ bool StartReplay(int client, int style, const char[] path, const char[] replay_n
 
 	int bot = Shavit_StartReplayFromFrameCache(aCache.aHeader.iStyle, aCache.aHeader.iTrack, -1.0, client, -1, Replay_Dynamic, false, aCache.aFrameCache);
 
-	if(!gCV_ReplayCache.BoolValue) // File cache will use the handle when enabled otherwise delete it
+	if(!IsFlagEnabled(Flag_CacheReplays)) // File cache will use the handle when enabled otherwise delete it
 	{
 		// Shavit_StartReplayFromFrameCache should clone the handle so we delete this here
 		delete aCache.aFrameCache.aFrames; 
@@ -1373,7 +1561,22 @@ bool StartReplay(int client, int style, const char[] path, const char[] replay_n
 		gSM_ReplayCache.SetArray(path, aCache, sizeof(aCache));
 	}
 
+	if(bot != 0 && IsFlagEnabled(Flag_FakeReplayCommand))
+	{
+		// We have to wait or the menu only shows unselectable items
+		CreateTimer(0.5, Timer_FakeReplayCommand, GetClientSerial(client));
+	}
+
 	return (bot != 0);
+}
+
+void Timer_FakeReplayCommand(Handle timer, any data)
+{
+	int client = GetClientFromSerial(data);
+	if(client)
+	{
+		FakeClientCommand(client, "sm_replay");
+	}
 }
 
 // Custom LoadReplayCache without any track/style checks + returns the header
@@ -1386,11 +1589,16 @@ stock bool LoadReplayCache2(replay_header_t header, frame_cache_t cache, const c
 	{
 		if (header.iReplayVersion > REPLAY_FORMAT_SUBVERSION)
 		{
-			// not going to try and read it
+			// lets log and error if we cannot read the replay
+			LogError("Replay file '%s' was recorded on a newer version (v%d) than supported (v%d) - cannot read", path, header.iReplayVersion, REPLAY_FORMAT_SUBVERSION);		
 		}
 		else if (header.iReplayVersion < 0x03 || StrEqual(header.sMap, mapname, false))
 		{
 			success = ReadReplayFrames(fFile, header, cache);
+		}
+		else
+		{
+			LogError("Replay file '%s' was recorded on map '%s' but current map is '%s' - skipping", path, header.sMap, mapname);		
 		}
 
 		delete fFile;
@@ -1495,7 +1703,7 @@ void CheckWRCache(int client, const char[] map, int style, int menu)
 	FormatEx(sKey, sizeof(sKey), "%d%s", style, map);
 
 	float cached_time;
-	if(gS_MapsCachedTime.GetValue(sKey, cached_time))
+	if(gSM_MapsCachedTime.GetValue(sKey, cached_time))
 	{
 		if(cached_time > (GetEngineTime() - gCV_CacheTime.FloatValue))
 		{
@@ -1526,7 +1734,7 @@ bool GetCachedRecords(const char[] map, int style, ArrayList &records)
 
 	char sKey[PLATFORM_MAX_PATH];
 	FormatEx(sKey, sizeof(sKey), "%d%s", style, map);
-	if(!gS_Maps.GetValue(sKey, records) || !records || !records.Length)
+	if(!gSM_Maps.GetValue(sKey, records) || !records || !records.Length)
 		return false;
 
 	return true;
@@ -1534,7 +1742,7 @@ bool GetCachedRecords(const char[] map, int style, ArrayList &records)
 
 bool AllowReplays(int client, int style = -1, bool notify = true)
 {
-	if(!gB_System2 || !gB_ReplayPlayback)
+	if(!gB_DirExists || !gB_ReplayPlayback)
 	{
 		if(notify) 
 		{
@@ -1712,6 +1920,12 @@ public int MenuHandler_Settings(Menu menu, MenuAction action, int client, int pa
 }
 
 #if defined CUSTOM_BUILD
+public void Shavit_OnMapListLoaded(ArrayList maps)
+{
+	delete gA_MapList;
+	gA_MapList = view_as<ArrayList>(CloneHandle(maps));	
+}
+
 public void Shavit_OnSettingsMenuRequest(int client)
 {
 	char sDisplay[64];
