@@ -3,6 +3,8 @@
 A [SourceMod](https://www.sourcemod.net/) plugin that integrates with the [Offstyle](https://offstyles.tommyy.dev/) API to display and browse World Records directly on your server. Players can view ranked record lists, inspect detailed run info, and watch downloaded replays, all from an in-game menu.
 
 ---
+> **Note:** Replay downloading is currently broken. Proper support is planned and will be implemented once available.
+---
 
 ## Features
 
@@ -18,8 +20,8 @@ A [SourceMod](https://www.sourcemod.net/) plugin that integrates with the [Offst
 ## Requirements
 
 - [SourceMod](https://www.sourcemod.net/) 1.12+
-- [sm-ripext](https://github.com/ErikMinekus/sm-ripext) — HTTP extension for API requests
-- [System2](https://github.com/dordnung/System2) *(optional)* — Required for replay downloading
+- [sm-ripext](https://github.com/ErikMinekus/sm-ripext) — HTTP extension for API requests and replay downloading
+- [SteamWorks](https://forums.alliedmods.net/showthread.php?t=229556) *(optional)* — Alternative HTTP extension for API requests, recommended on Windows [(sm-ripext issue)](https://github.com/ErikMinekus/sm-ripext/issues/63)
 - [shavit-bhoptimer](https://github.com/shavitush/bhoptimer) *(optional)* — For HUD and replay playback integration
 
 ---
@@ -45,15 +47,19 @@ The order of entries can be changed freely and will be reflected in the style se
     // Offstyle DB style ID
     "190"
     {
-        // Display name shown in menus
+        // Display name shown in the style selection menu and WR list/info title
         "style_name"    "Normal"
 
-        // Maps to shavit style index for Top Left HUD display
-        // Remove to disable HUD time display for this style
+		// Maps the offstyle DB style (190) to the server style (0) from shavit-styles.cfg for the Top Left HUD display
+		// Used by Top Left HUD to automatically show offstyle records when playing this server style
+		// Also used by the re-cache feature to detect when a new record should trigger a cache refresh
+		// Remove or set to -1 to disable the Top Left HUD and re-cache for this style (Can still display the default style when enabled)
         "style_server"  "0"
 
-        // Maps to shavit style index used when playing replays
-        // Remove to disable the replay option for this style
+		// Maps the offstyle DB style (190) to the server style (0) from shavit-styles.cfg for the correct replay style
+		// Ensures replay bots play with the correct server style
+		// You may use a different server style (E.g. the index for Normal) if you do not have a matching style on your server
+		// Remove or set to -1 to disable the replay option for this style
         "style_replay"  "0"
     }*
 }
