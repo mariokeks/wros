@@ -1,6 +1,6 @@
 # WROS — Offstyle World Records for SourceMod
 
-A [SourceMod](https://www.sourcemod.net/) plugin that integrates with the [Offstyle](https://offstyles.tommyy.dev/) API to display and browse World Records directly on your server. Players can view ranked record lists, inspect detailed run info, and watch downloaded replays, all from an in-game menu.
+A [SourceMod](https://www.sourcemod.net/) plugin that integrates with the [Offstyle](https://offstyles.net/) API to display and browse World Records directly on your server. Players can view ranked record lists, inspect detailed run info, and watch downloaded replays, all from an in-game menu. Based on [WRSJ](https://github.com/rtldg/wrsj).
 
 ---
 > **Note:** Replay downloading is currently broken. Proper support is planned and will be implemented once available.
