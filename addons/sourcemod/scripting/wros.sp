@@ -50,7 +50,7 @@ public Plugin myinfo =
 	name = "Offstyle World Record",
 	author = "rtldg & Nairda, ƤɾσƅƖeɱ?",
 	description = "Grabs WRs from the Offstyle DB API",
-	version = "0.8.1"
+	version = "0.8.2"
 }
 
 // #define CUSTOM_BUILD // Enables custom stuff that are not part of the public build of shavits bhoptimer
@@ -1326,13 +1326,16 @@ void AddSettingItem(Menu menu, int client, int hud, char[] translation)
 
 void FormatDiff(int client, float time, float wr_time, char[] output, int maxlen)
 {
-	if(time == wr_time)
+	// So since the wr_time returns now the the time of the 2nd place if we retrieve with from the fastest time ...
+	// we should check the difference positive is a slower run while a negative difference is the fastest run
+	float fDifference = time - wr_time;
+	if(fDifference < 0.0)
 	{
 		FormatEx(output, maxlen, "%T", "Difference_WR", client);
 	}
 	else // Everything else should be higher than the wr time..
 	{
-		FormatSeconds(time - wr_time, output, maxlen);
+		FormatSeconds(fDifference, output, maxlen);
 		Format(output, maxlen, "+%s", output);
 	}
 }
