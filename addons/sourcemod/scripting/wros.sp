@@ -17,7 +17,6 @@
  */
 
 // TODO?
-// - Do we highlight records marked as is_banned or is_invalid or just remove them from the list?
 // - Maybe dont request every style OnConfigsExecuted? We could request styles when a player changes to a mapped style with no gSM_MapsCachedTime set
 // - Should we rename stuff? WROSDB / OSDB / Offstyle Database / Offstyle DB? Send help ( ╥ω╥ )
 // - Pretty sure i forgot something.. ( ͡° ͜ʖ ͡°)
@@ -51,7 +50,7 @@ public Plugin myinfo =
 	name = "Offstyle World Record",
 	author = "rtldg & Nairda, ƤɾσƅƖeɱ?",
 	description = "Grabs WRs from the Offstyle DB API",
-	version = "0.8.0"
+	version = "0.8.1"
 }
 
 // #define CUSTOM_BUILD // Enables custom stuff that are not part of the public build of shavits bhoptimer
@@ -84,8 +83,8 @@ enum struct download_queue_t
 	char sMap[PLATFORM_MAX_PATH];	// Mapname when we started the request, used for verification so it doesnt start the replay on another map
 	char sName[32+1]; 		// Used to cache the name of the record holder of the replay so we can set the replay name correctly......
 	char sReplayRef[32]; 	// Reference of the Offstyle replay, used to re-download a replay on download failure
-	int iStyle;			// Style index, 0 if not found
-	int iRequester;		// UserId of the requester
+	int iStyle;			// Style index, -1 if not found
+	int iRequester;		// Serial of the requester
 	int iRetries;		// Retry counter...
 	float fTime; 		// EngineTime when we started the download, 0.0 when it was already queued
 }
@@ -107,8 +106,8 @@ Convar gCV_DLUrl;
 Convar gCV_DLDirectory;
 Convar gCV_DLRetryCount;
 Convar gCV_APIUrl;
-Convar gCV_CacheTime;
 Convar gCV_WRCount;
+Convar gCV_CacheTime;
 Convar gCV_DefaultStyle;
 Convar gCV_DefaultSettings;
 Convar gCV_AlwaysShowSelection;
@@ -118,6 +117,7 @@ Convar gCV_Flags;
 
 StringMap gSM_Maps;
 StringMap gSM_MapsCachedTime;
+StringMap gSM_MapsTotalRecords;
 StringMap gSM_RecordInfo; // Lets duplicate our data so we can search easier :3
 StringMap gSM_ReplayCount;
 StringMap gSM_ReplayCache;
@@ -169,9 +169,15 @@ public void OnPluginStart()
 	gCV_DLDirectory = new Convar("os_dl_directory", "", "Directory for the temporary replay files.\nLeave empty to disable replay feature.\nRequires a map change or server restart to take effect.\nDoes not create directories automatically.");
 	gCV_DLUrl = new Convar("os_dl_url", "https://offstyles.tommyy.dev/api/replay?id=", "Download URL. Can be changed for testing.", FCVAR_PROTECTED);
 	gCV_DLRetryCount = new Convar("os_dl_retry_count", "1", "How many times to retry a failed replay download before giving up.", 0, true, 0.0, true, 5.0);
-	gCV_APIUrl = new Convar("os_api_url", "https://offstyles.tommyy.dev/api/map?map=", "API URL. Can be changed for testing.", FCVAR_PROTECTED);
+	gCV_APIUrl = new Convar("os_api_url", "https://offstyles.net/api/times?map={map}&style={style}&sort=Fastest&best=true&page=1&limit=50", "API endpoint for fetching records."
+		..."\nPlaceholders: {map} = map name, {style} = style ID."
+		..."\nlimit - Records per page/request (Default 50)"
+		..."\npage - Page number, shouldn't be changed since we dont send multiple paged requests"
+		..."\nbest - Whether to show only the best record of a player or all records from a player"
+		..."\nsort - Sort type (Fastest/Slowest/Newest/Oldest)"
+		..."\nFull docs: https://offstyles.net/api/docs/#/Record/get_times", FCVAR_PROTECTED);	
+	gCV_WRCount = new Convar("os_api_wr_count", "50", "How many top times should be shown in the !wros menu.\nCannot exceed the limit set in os_api_url.", 0, true, 0.0);
 	gCV_CacheTime = new Convar("os_api_cache_time", "666.0", "How many seconds to cache a map from the Offstyle API.", 0, true, 5.0);
-	gCV_WRCount = new Convar("os_api_wr_count", "50", "How many top times should be shown in the !wros menu.", 0, true, 0.0);
 	gCV_DefaultStyle = new Convar("os_default_style", "190", "(Offstyle) Style ID to use as the default for the Top Left HUD.", 0, true, 0.0);
 	gCV_AlwaysShowSelection = new Convar("os_always_show_selection", "1", "Always show the map selection menu, even if only a single matching map is found.\nYou may disable this if you have a large map list on the server.", 0, true, 0.0, true, 1.0);
 	gCV_Flags = new Convar("os_flags", "3", "Miscellaneous options as bitflag"
@@ -206,6 +212,7 @@ public void OnPluginStart()
 
 	gSM_Maps = new StringMap();
 	gSM_MapsCachedTime = new StringMap();
+	gSM_MapsTotalRecords = new StringMap();
 	gSM_RecordInfo = new StringMap();
 	gSM_ReplayCount = new StringMap();
 	gA_MapList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
@@ -283,6 +290,7 @@ public void OnMapStart()
 			delete records;
 			gSM_Maps.Remove(sKey);
 			gSM_MapsCachedTime.Remove(sKey);
+			gSM_MapsTotalRecords.Remove(sKey);
 		}
 	}
 	delete snapshot;
@@ -473,7 +481,7 @@ void GetRecordCount(WROS_Menu type, const char[] map, int style, char[] output, 
 {
 	ArrayList aRecords;
 	char sKey[PLATFORM_MAX_PATH];
-	FormatEx(sKey, sizeof(sKey), "%d%s", style, map);
+	FormatKey(map, style, sKey, sizeof(sKey));
 	if(!gSM_Maps.GetValue(sKey, aRecords))
 	{
 		strcopy(output, maxlen, "?");
@@ -543,12 +551,13 @@ void BuildWRMenu(int client, int first_item=0)
 
 	int maxrecords = gCV_WRCount.IntValue;
 	maxrecords = (maxrecords < records.Length) ? maxrecords : records.Length;
+	int totalrecords = GetCachedTotalRecords(gS_ClientMap[client], gI_LastStyle[client]);
 
 	WROS_StyleInfo aStyle;
 	gA_Styles.GetArray(gA_Styles.FindValue(gI_LastStyle[client], WROS_Style_Offstyle), aStyle);
 
 	Menu menu = new Menu(MenuHandler_BuildWRMenu);
-	menu.SetTitle("%T\n ", "BuildWRMenu_Title", client, gS_ClientMap[client], maxrecords, aStyle.sStyleName);
+	menu.SetTitle("%T\n ", "BuildWRMenu_Title", client, gS_ClientMap[client], maxrecords, aStyle.sStyleName, totalrecords);
 
 	WROS_RecordInfo record;
 	char sDisplay[128], sTime[32], sDiff[32];
@@ -786,12 +795,13 @@ void BuildReplayMenu(int client, int first_item=0)
 
 	int maxrecords = gCV_WRCount.IntValue;
 	maxrecords = (maxrecords < records.Length) ? maxrecords : records.Length;
+	int totalrecords = GetCachedTotalRecords(gS_ClientMap[client], gI_LastStyle[client]);
 
 	WROS_StyleInfo aStyle;
 	gA_Styles.GetArray(gA_Styles.FindValue(gI_LastStyle[client], WROS_Style_Offstyle), aStyle);
 
 	Menu menu = new Menu(MenuHandler_BuildReplayMenu);
-	menu.SetTitle("%T\n ", "BuildReplayMenu_Title", client, gS_ClientMap[client], maxrecords, aStyle.sStyleName);
+	menu.SetTitle("%T\n ", "BuildReplayMenu_Title", client, gS_ClientMap[client], maxrecords, aStyle.sStyleName, totalrecords);
 
 	WROS_RecordInfo record;
 	char sDisplay[128], sTime[32], sDiff[32];
@@ -862,10 +872,10 @@ void MenuHandler_BuildReplayMenu(Menu menu, MenuAction action, int client, int p
 	}
 }
 
-ArrayList CacheMap(char mapname[PLATFORM_MAX_PATH], JSONArray json, int style)
+ArrayList CacheMap(char mapname[PLATFORM_MAX_PATH], JSONArray json, int style, int total_records)
 {
 	char sKey[PLATFORM_MAX_PATH];
-	FormatEx(sKey, sizeof(sKey), "%d%s", style, mapname);
+	FormatKey(mapname, style, sKey, sizeof(sKey));
 
 	ArrayList records;
 	if(gSM_Maps.GetValue(sKey, records))
@@ -882,6 +892,7 @@ ArrayList CacheMap(char mapname[PLATFORM_MAX_PATH], JSONArray json, int style)
 	records = new ArrayList(sizeof(WROS_RecordInfo));
 
 	gSM_MapsCachedTime.SetValue(sKey, GetEngineTime(), true);
+	gSM_MapsTotalRecords.SetValue(sKey, total_records);
 	gSM_Maps.SetValue(sKey, records, true);
 
 	int iSize = json.Length, iReplays;
@@ -932,7 +943,7 @@ ArrayList CacheMap(char mapname[PLATFORM_MAX_PATH], JSONArray json, int style)
 void RIP_Request_Callback(HTTPResponse response, DataPack pack, const char[] error)
 {
 	bool bSuccess = (response.Status == HTTPStatus_OK);
-	HandleRequest(pack, bSuccess ? view_as<JSONArray>(response.Data) : null, bSuccess, false, response.Status, error);
+	HandleRequest(pack, bSuccess ? view_as<JSONObject>(response.Data) : null, bSuccess, false, response.Status, error);
 }
 
 public void SteamWorks_Request_Callback(Handle request, bool bFailure, bool bRequestSuccessful, EHTTPStatusCode eStatusCode, DataPack pack)
@@ -949,10 +960,10 @@ public void SteamWorks_Request_Callback(Handle request, bool bFailure, bool bReq
 
 void SteamWorks_RequestBody_Callback(const char[] data, DataPack pack)
 {
-	HandleRequest(pack, JSONArray.FromString(data), true, true);
+	HandleRequest(pack, JSONObject.FromString(data), true, true);
 }
 
-void HandleRequest(DataPack pack, JSONArray records, bool success, bool steamworks, int status = -1, const char[] error = "")
+void HandleRequest(DataPack pack, JSONObject json_response, bool success, bool steamworks, int status = -1, const char[] error = "")
 {
 	pack.Reset();
 
@@ -982,12 +993,15 @@ void HandleRequest(DataPack pack, JSONArray records, bool success, bool steamwor
 		return;
 	}
 
-	ArrayList records2 = CacheMap(mapname, records, style);
+	JSONArray records = view_as<JSONArray>(json_response.Get("data"));
+	int total_records = json_response.GetInt("total");
+	ArrayList records2 = CacheMap(mapname, records, style, total_records);
+	delete records;
 
 	// the records handle is closed by ripext post-callback
 	if(steamworks)
 	{
-		delete records;		
+		delete json_response;		
 	}
 
 	if(callback_pack)
@@ -1012,13 +1026,13 @@ bool RetrieveWRs(int client, const char[] mapname, int style, int menu = WROS_Me
 {
 	int serial = client ? GetClientSerial(client) : 0;
 	// char apikey[40];
-	char apiurl[230];
+	char sURL[230];
 
 	// gCV_APIKey.GetString(apikey, sizeof(apikey));
-	gCV_APIUrl.GetString(apiurl, sizeof(apiurl));
+	gCV_APIUrl.GetString(sURL, sizeof(sURL));
 
-	// if(apikey[0] == 0 || apiurl[0] == 0)
-	if(apiurl[0] == 0)
+	// if(apikey[0] == 0 || sURL[0] == 0)
+	if(sURL[0] == 0)
 	{
 		// ReplyToCommand(client, "[WROS] Offstyle API key or URL is not set.");
 		// LogError("WROS: Offstyle API key or URL is not set.");
@@ -1035,12 +1049,15 @@ bool RetrieveWRs(int client, const char[] mapname, int style, int menu = WROS_Me
 	pack.WriteCell(menu);
 	pack.WriteCell(MOREPACKS);
 
-	// https://offstyles.tommyy.dev/api/map?map=bhop_arcane_v1&style=190&limit=50&page=1
-	Format(apiurl, sizeof(apiurl), "%s%s&style=%d&limit=%d", apiurl, mapname, style, gCV_WRCount.IntValue); 
+	// https://offstyles.net/api/times?map={map}&style={style}&sort=Fastest&best=true&page=1&limit=50
+	char sStyleID[11];
+	IntToString(style, sStyleID, sizeof(sStyleID));
+	ReplaceStringEx(sURL, sizeof(sURL), "{map}", mapname);
+	ReplaceStringEx(sURL, sizeof(sURL), "{style}", sStyleID);
 
 	if(!IsFlagEnabled(Flag_UseSteamWorks))
 	{
-		HTTPRequest http = new HTTPRequest(apiurl);
+		HTTPRequest http = new HTTPRequest(sURL);
 		// http.SetHeader("api-key", "%s", apikey);
 		http.Get(RIP_Request_Callback, pack);
 		return true;
@@ -1048,7 +1065,7 @@ bool RetrieveWRs(int client, const char[] mapname, int style, int menu = WROS_Me
 
 	// From shavit-zones-http.sp
 	Handle hRequest;
-	if (!(hRequest = SteamWorks_CreateHTTPRequest(k_EHTTPMethodGET, apiurl))
+	if (!(hRequest = SteamWorks_CreateHTTPRequest(k_EHTTPMethodGET, sURL))
 	//   || (apikey[0] && !SteamWorks_SetHTTPRequestHeaderValue(hRequest, "api-key", apikey))
 	  || !SteamWorks_SetHTTPRequestHeaderValue(hRequest, "accept", "application/json")
 	//   || !(!apikey[0] || SteamWorks_SetHTTPRequestHeaderValue(hRequest, "api-key", apikey))
@@ -1356,11 +1373,11 @@ bool GetReplay(int client, const char[] id)
 	else if(bQueued)
 	{
 		download_queue_t aQueue;
-		int iSize = gA_DownloadQueue.Length, iUserID = GetClientUserId(client);
+		int iSize = gA_DownloadQueue.Length, iSerial = GetClientSerial(client);
 		for(int i = 0; i < iSize; i++)
 		{
 			gA_DownloadQueue.GetArray(i, aQueue);
-			if(aQueue.iRequester == iUserID && StrEqual(sOutputFile, aQueue.sPath))
+			if(aQueue.iRequester == iSerial && StrEqual(sOutputFile, aQueue.sPath))
 			{
 				CPrintToChat(client, "%T", "Chat_Download_Queued", client);
 				return false;
@@ -1374,7 +1391,7 @@ bool GetReplay(int client, const char[] id)
 	}
 
 	download_queue_t aQueue;
-	aQueue.iRequester = GetClientUserId(client);
+	aQueue.iRequester = GetClientSerial(client);
 	aQueue.sPath = sOutputFile;
 	aQueue.sMap = gS_CurrentMap;
 	aQueue.iStyle = iReplayStyle;
@@ -1465,7 +1482,7 @@ void OnDownloadFinished_Callback(HTTPStatus status, any value, const char[] erro
 	gA_DownloadQueue.Erase(iIndex);
 
 	float fTimeElapsed = GetEngineTime() - aQueue.fTime;
-	int client = GetClientOfUserId(aQueue.iRequester);
+	int client = GetClientFromSerial(aQueue.iRequester);
 	DownloadFinished(client, bSuccess, aQueue, fTimeElapsed);
 
 	// Check if someone else already requested it and trigger the same 
@@ -1475,7 +1492,7 @@ void OnDownloadFinished_Callback(HTTPStatus status, any value, const char[] erro
 		gA_DownloadQueue.GetArray(i, aQueue);
 		if(StrEqual(aQueue.sPath, sOutputFile))
 		{
-			client = GetClientOfUserId(aQueue.iRequester);
+			client = GetClientFromSerial(aQueue.iRequester);
 			DownloadFinished(client, bSuccess, aQueue, fTimeElapsed);
 			gA_DownloadQueue.Erase(i);
 		}
@@ -1700,7 +1717,7 @@ void MenuHandler_SelectMap(Menu menu, MenuAction action, int client, int param2)
 void CheckWRCache(int client, const char[] map, int style, int menu)
 {
 	char sKey[PLATFORM_MAX_PATH];
-	FormatEx(sKey, sizeof(sKey), "%d%s", style, map);
+	FormatKey(map, style, sKey, sizeof(sKey));
 
 	float cached_time;
 	if(gSM_MapsCachedTime.GetValue(sKey, cached_time))
@@ -1733,11 +1750,34 @@ bool GetCachedRecords(const char[] map, int style, ArrayList &records)
 		return false;
 
 	char sKey[PLATFORM_MAX_PATH];
-	FormatEx(sKey, sizeof(sKey), "%d%s", style, map);
+	FormatKey(map, style, sKey, sizeof(sKey));
 	if(!gSM_Maps.GetValue(sKey, records) || !records || !records.Length)
 		return false;
 
 	return true;
+}
+
+/**
+ * Returns the total records Offstyle holds for a specific map and style.
+ * The total amount of records inside the record ArrayLists is set by the URL!
+ * 
+ * @param map       Mapname
+ * @param style     Style ID in the Offstyle API.
+ * @return         	Amount of total records, -1 if the map & style not cached.
+ */
+int GetCachedTotalRecords(const char[] map, int style)
+{
+	char sKey[PLATFORM_MAX_PATH];
+	FormatKey(map, style, sKey, sizeof(sKey));
+
+	int iTotalRecords = -1;
+	gSM_MapsTotalRecords.GetValue(sKey, iTotalRecords);
+	return iTotalRecords;
+}
+
+void FormatKey(const char[] map, int style, char[] output, int maxlen)
+{
+	FormatEx(output, maxlen, "%d%s", style, map);
 }
 
 bool AllowReplays(int client, int style = -1, bool notify = true)
@@ -1772,13 +1812,6 @@ bool AllowReplays(int client, int style = -1, bool notify = true)
 	return true;
 }
 
-/**
- * Converts a steamid to steamid 2 format when necessary.
- * 
- * @param output      Destination string buffer to copy to.
- * @param maxlen      Destination buffer length (includes null terminator).
- * @return            True if steamid is valid, false if not.
- */
 void AccountIDToSteamID(int accountid, char[] output, int maxlen)
 {
 	switch(gCV_AuthType.IntValue)
