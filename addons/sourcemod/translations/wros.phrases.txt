@@ -75,6 +75,10 @@
 	{
 		"en"		"Open Offstyle profile"
 	}
+	"RecordInfo_Item_OSRecord"
+	{
+		"en"		"Open Offstyle record"
+	}
 	"RecordInfo_Item_LoadReplay"
 	{
 		"en"		"Load replay"
@@ -179,15 +183,20 @@
 	{
 		"en"		"{dodgerblue}[WROS]{white} Record not found."
 	}
-	"Chat_Steam_Profile_URL"
+	"Chat_URL_Steam_Profile"
 	{
 		"#format"	"{1:s},{2:s},{3:s}"
 		"en"		"{dodgerblue}[WROS]{white} https://steamcommunity.com/profiles/{3}"
 	}
-	"Chat_Offstyle_Profile_URL"
+	"Chat_URL_Offstyle_Profile"
 	{
 		"#format"	"{1:s},{2:s},{3:s}"
-		"en"		"{dodgerblue}[WROS]{white} https://offstyles.tommyy.dev/players/{3}"
+		"en"		"{dodgerblue}[WROS]{white} https://offstyles.net/players/{3}"
+	}
+	"Chat_URL_Offstyle_Record"
+	{
+		"#format"	"{1:s},{2:s},{3:s},{4:s}"
+		"en"		"{dodgerblue}[WROS]{white} https://offstyles.net/run/{4}"
 	}
 	// MOTD
 	"MOTD_Title_SteamProfile"
@@ -199,6 +208,11 @@
 	{
 		"#format"	"{1:s},{2:s}"
 		"en"		"Offstyle Profile {1} [{2}]"
+	}
+	"MOTD_Title_OffstyleRecord"
+	{
+		"#format"	"{1:s},{2:s}"
+		"en"		"Offstyle Individual Record"
 	}
 	
 	// Guess best map

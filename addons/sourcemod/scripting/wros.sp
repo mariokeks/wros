@@ -50,7 +50,7 @@ public Plugin myinfo =
 	name = "Offstyle World Record",
 	author = "rtldg & Nairda, ƤɾσƅƖeɱ?",
 	description = "Grabs WRs from the Offstyle DB API",
-	version = "0.8.2"
+	version = "0.8.3"
 }
 
 // #define CUSTOM_BUILD // Enables custom stuff that are not part of the public build of shavits bhoptimer
@@ -660,6 +660,10 @@ void MenuHandler_BuildWRMenu(Menu menu, MenuAction action, int client, int param
 			FormatEx(sInfo, sizeof(sInfo), "2%s", record._id);
 			submenu.AddItem(sInfo, sDisplay);
 
+			FormatEx(sDisplay, sizeof(sDisplay), "%T", "RecordInfo_Item_OSRecord", client);
+			FormatEx(sInfo, sizeof(sInfo), "4%s", record._id);
+			submenu.AddItem(sInfo, sDisplay);
+
 			// Only show the option when the extension and replay-playback are loaded, we have a replay style set and the player has access
 			if(AllowReplays(client, record.style, false))
 			{
@@ -707,14 +711,14 @@ int MenuHandler_RecordInfo(Menu menu, MenuAction action, int client, int param2)
 
 			switch(info[0])
 			{
-				case '1', '2': 
+				case '1', '2', '4': 
 				{
-					DataPack pack = new DataPack();
-					pack.WriteString(info[1]);
+					DataPack hPack = new DataPack();
+					hPack.WriteString(info[1]);
 					info[1] = '\0';
-					pack.WriteCell(StringToInt(info[0]));
+					hPack.WriteCell(StringToInt(info[0]));
 
-					QueryClientConVar(client, "cl_disablehtmlmotd", Query_Disablehtmlmotd, pack);
+					QueryClientConVar(client, "cl_disablehtmlmotd", Query_Disablehtmlmotd, hPack);
 				}
 				case '3':
 				{
@@ -763,7 +767,12 @@ public void Query_Disablehtmlmotd(QueryCookie cookie, int client, ConVarQueryRes
 			case 2:
 			{
 				FormatEx(sTitle, sizeof(sTitle), "%T", "MOTD_Title_OffstyleProfile", client, record.name, sAuth);
-				FormatEx(sURL, sizeof(sURL), "https://offstyles.tommyy.dev/players/%s/", record.steamid);
+				FormatEx(sURL, sizeof(sURL), "https://offstyles.net/players/%s", record.steamid);
+			}
+			case 4:
+			{
+				FormatEx(sTitle, sizeof(sTitle), "%T", "MOTD_Title_OffstyleRecord", client, record.name, sAuth);
+				FormatEx(sURL, sizeof(sURL), "https://offstyles.net/run/%s", record._id);
 			}
 		}
 		ShowMOTDPanel(client, sTitle, sURL, MOTDPANEL_TYPE_URL);
@@ -772,8 +781,9 @@ public void Query_Disablehtmlmotd(QueryCookie cookie, int client, ConVarQueryRes
 	{
 		switch(type)
 		{
-			case 1: CPrintToChat(client, "%T", "Chat_Steam_Profile_URL", client, record.name, sAuth, record.steamid);
-			case 2: CPrintToChat(client, "%T", "Chat_Offstyle_Profile_URL", client, record.name, sAuth, record.steamid);
+			case 1: CPrintToChat(client, "%T", "Chat_URL_Steam_Profile", client, record.name, sAuth, record.steamid);
+			case 2: CPrintToChat(client, "%T", "Chat_URL_Offstyle_Profile", client, record.name, sAuth, record.steamid);
+			case 4: CPrintToChat(client, "%T", "Chat_URL_Offstyle_Record", client, record.name, sAuth, record.steamid, record._id);
 		}
 	}
 }
