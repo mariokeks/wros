@@ -59,13 +59,13 @@
 	// Record info menu
 	"RecordInfo_Title"
 	{
-		"#format"	"{1:s},{2:s},{3:s},{4:s},{5:s},{6:d},{7:d},{8:.2f},{9:s},{10:s},{11:s}"
-		"en"		"{1} [{2}]\n \n{10} - {11}\n \nDate: {3}\nTime: {4} ({5})\nJumps: {6}\nStrafes: {7} ({8}%%)\nServer: {9}"
+		"#format"	"{1:s},{2:s},{3:s},{4:s},{5:s},{6:d},{7:d},{8:s},{9:s},{10:s},{11:s}"
+		"en"		"{1} [{2}]\n \n{10} - {11}\n \nDate: {3}\nTime: {4} ({5})\nJumps: {6}\nStrafes: {7}{8}\nServer: {9}"
 	}
-	"RecordInfo_Title_Country"
+	"RecordInfo_Title_Sync"
 	{
-		"#format"	"{1:s}"
-		"en"		"Country: {1}"
+		"#format"	"{1:.2f}"
+		"en"		" ({1}%%)"
 	}
 	"RecordInfo_Item_SteamProfile"
 	{
@@ -95,7 +95,7 @@
 	}
 	"SettingTitle"
 	{
-		"en"		"Offstyle World Record Settings\n "
+		"en"		"Offstyle World Record Settings"
 	}
 	"SettingItem_TopLeftHUD"
 	{
@@ -103,19 +103,31 @@
 	}
 	"SettingItem_AfterTopLeft"
 	{
-		"en"		"Show WROS after WR & PB"
+		"en"		"Show WROS after WR & PB\n‒‒‒‒‒‒‒"
 	}
-	"SettingItem_EveryStyle"
+	"SettingItem_DontShowForDefault"
+	{
+		"en"		"Show WROS for all styles except Normal"
+	}
+	"SettingItem_AlwaysShowStyleNames"
+	{
+		"en"		"Always show style names"
+	}
+	"SettingItem_HUDMode_AllStyles"
 	{
 		"en"		"Show WROS in all styles"
 	}
-	"SettingItem_ShowOnlyDefault"
+	"SettingItem_HUDMode_AllWithFallback"
 	{
-		"en"		"Show WROS only for style Normal"
+		"en"		"Show WROS in all styles, fallback to Normal when the current style has no records"
 	}
-	"SettingItem_FallbackToDefault"
+	"SettingItem_HUDMode_OnlyOnDefault"
 	{
-		"en"		"Use Normal when the current style has no records"
+		"en"		"Only show WROS when on style Normal"
+	}
+	"SettingItem_HUDMode_OnlyShowDefault"
+	{
+		"en"		"Always show WROS for style Normal\n‒‒‒‒‒‒‒"
 	}
 	
 	// Chat
@@ -219,7 +231,7 @@
 	"GuessBestMapName_Title"
 	{
 		"#format"	"{1:s},{2:d}"
-		"en"		"Offstyle World Record\n "
+		"en"		"Offstyle World Record"
 	}
 	"GuessBestMapName_SelectInput"
 	{

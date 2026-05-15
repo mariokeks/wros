@@ -17,6 +17,7 @@
  */
 
 // TODO?
+// - Maybe LOOPING replay bot?
 // - Maybe dont request every style OnConfigsExecuted? We could request styles when a player changes to a mapped style with no gSM_MapsCachedTime set
 // - Should we rename stuff? WROSDB / OSDB / Offstyle Database / Offstyle DB? Send help ( ╥ω╥ )
 // - Pretty sure i forgot something.. ( ͡° ͜ʖ ͡°)
@@ -50,7 +51,7 @@ public Plugin myinfo =
 	name = "Offstyle World Record",
 	author = "rtldg & Nairda, ƤɾσƅƖeɱ?",
 	description = "Grabs WRs from the Offstyle DB API",
-	version = "0.8.3"
+	version = "0.8.4"
 }
 
 // #define CUSTOM_BUILD // Enables custom stuff that are not part of the public build of shavits bhoptimer
@@ -90,16 +91,25 @@ enum struct download_queue_t
 }
 ArrayList gA_DownloadQueue;
 
+// Gaps are kept for backwards compatibility with cookies
 enum
 {
 	Setting_TopLeftHUD,
-	Setting_EveryStyle,
-	Setting_AfterTopLeft,
-	Setting_ShowOnlyDefault,
-	Setting_FallbackToDefault,
+	Setting_AfterTopLeft = 2,
+	Setting_AlwaysShowStyleNames = 5,
+	Setting_DontShowForDefault,
 }
 int gI_ClientSettings[MAXPLAYERS+1];
 Cookie gH_Cookie;
+enum
+{
+	HUDMode_OnlyOnDefault, 		// Only show when on default style
+	HUDMode_AllStyles, 			// Show for every style
+	HUDMode_AllWithFallback, 	// Show for every style, fall back to default record when current style has no record
+	HUDMode_OnlyShowDefault, 	// Always show default style record regardless of current style
+}
+int gI_ClientHUDMode[MAXPLAYERS+1];
+Cookie gH_CookieMode;
 
 // Convar gCV_APIKey;
 Convar gCV_DLUrl;
@@ -110,6 +120,7 @@ Convar gCV_WRCount;
 Convar gCV_CacheTime;
 Convar gCV_DefaultStyle;
 Convar gCV_DefaultSettings;
+Convar gCV_DefaultHUDMode;
 Convar gCV_AlwaysShowSelection;
 Convar gCV_ReCache;
 Convar gCV_AuthType;
@@ -196,12 +207,16 @@ public void OnPluginStart()
 		..."\n1 = Steam2 (STEAM_1:1:4153990)"
 		..."\n2 = Steam3 ([U:1:8307981])"
 		..."\n3 = SteamID64 (76561197968573709)", 0, true, 1.0, true, 3.0);
-	gCV_DefaultSettings = new Convar("os_default_settings", "23", "Default settings as a bitflag"
+	gCV_DefaultSettings = new Convar("os_default_settings", "5", "Default settings as a bitflag"
 		..."\n1 = Enable the OS time (Top Left HUD)"
-		..."\n2 = Show the OS time in every style"
 		..."\n4 = Show the OS time after the WR/PB lines"
-		..."\n8 = Always show the default style time, regardless of the current style"
-		..."\n16 = Fall back to the default style time (with style name shown) when no time is available for the current style", 0, true, 0.0);	
+		..."\n32 = Always show the style names"	
+		..."\n64 = Show OS time for all styles except default (Normal)", 0, true, 0.0);	
+	gCV_DefaultHUDMode = new Convar("os_default_hud_mode", "1", "Default hud mode"
+		..."\nHUDMode_OnlyOnDefault     = 0, // Only show when on default style"
+		..."\nHUDMode_AllStyles       = 1, // Show for every style"
+		..."\nHUDMode_AllWithFallback = 2, // Show for every style, fall back to default record when current style has no record"
+		..."\nHUDMode_OnlyShowDefault     = 3, // Always show default style record regardless of current style", 0, true, 0.0, true, 3.0);	
 	Convar.AutoExecConfig("wros");
 
 	RegConsoleCmd("sm_wrossettings", Command_Settings, "Opens the wros settings menu.");
@@ -221,6 +236,7 @@ public void OnPluginStart()
 	
 	SetCookieMenuItem(MenuHandler_Cookie, 0, "wros");
 	gH_Cookie = new Cookie("wros", "Offstyle World Record Settings", CookieAccess_Private);
+	gH_CookieMode = new Cookie("wros_mode", "Offstyle World Record HUD Mode", CookieAccess_Private);
 }
 
 public void OnPluginEnd()
@@ -391,31 +407,58 @@ public Action Shavit_OnTopLeftHUD(int client, int target, char[] topleft, int to
 	int isReplay = (gB_ReplayPlayback && Shavit_IsReplayEntity(target));
 	int style = isReplay ? Shavit_GetReplayBotStyle(target) : Shavit_GetBhopStyle(target);
 	int track = isReplay ? Shavit_GetReplayBotTrack(target) : Shavit_GetClientTrack(target);
-	style = (style == -1) ? 0 : style; // central replay bot probably
-	track = (track == -1) ? 0 : track; // central replay bot probably
+	// Fallback to the clients style/track when we have no style or track (central replay bot probably)
+	style = (style == -1) ? Shavit_GetBhopStyle(client) : style;
+	track = (track == -1) ? Shavit_GetClientTrack(client) : track;
 
-	if((!IsSettingEnabled(client, Setting_EveryStyle) && WROS_ConvertStyle(style, WROS_Style_Server, WROS_Style_Offstyle) != gCV_DefaultStyle.IntValue) || track > Track_Main)
+	if(track > Track_Main)
+		return Plugin_Continue;
+
+	int iStyleOffstyle = WROS_ConvertStyle(style, WROS_Style_Server, WROS_Style_Offstyle);
+	bool bDefaultStyle = (iStyleOffstyle == gCV_DefaultStyle.IntValue);
+
+	int iDisplayMode = gI_ClientHUDMode[client];
+	if(iDisplayMode > HUDMode_AllStyles && gA_Styles.Length <= 1) // In case there is only one style and player has a multi-style mode
+		iDisplayMode = HUDMode_AllStyles;
+
+	// Skip default style if the user wants to hide the default style
+	if(bDefaultStyle && (iDisplayMode == HUDMode_AllStyles || iDisplayMode == HUDMode_AllWithFallback) && IsSettingEnabled(client, Setting_DontShowForDefault))
 		return Plugin_Continue;
 
 	ArrayList records;
 	bool bFallback = false;
+	bool bShowStyleName = IsSettingEnabled(client, Setting_AlwaysShowStyleNames);
 
-	if(IsSettingEnabled(client, Setting_ShowOnlyDefault))
+	switch(iDisplayMode)
 	{
-		// We only need the records of the default style, when empty return
-		if(!GetCachedRecords(gS_CurrentMap, gCV_DefaultStyle.IntValue, records))
-			return Plugin_Continue;
-	}
-	else
-	{
-		// Get the records for the current style when possible
-		if(!GetCachedRecords(gS_CurrentMap, WROS_ConvertStyle(style, WROS_Style_Server, WROS_Style_Offstyle), records))
+		case HUDMode_OnlyShowDefault:
 		{
-			// When the current styles get the records from the default when possible and the player wants it, ignore it when we have only one style...
-			if(gA_Styles.Length <= 1 || !(bFallback = IsSettingEnabled(client, Setting_FallbackToDefault)) || !GetCachedRecords(gS_CurrentMap, gCV_DefaultStyle.IntValue, records))
-			{
+			if(!GetCachedRecords(gS_CurrentMap, gCV_DefaultStyle.IntValue, records))
 				return Plugin_Continue;
+			bShowStyleName = true;
+			iStyleOffstyle = gCV_DefaultStyle.IntValue;
+		}
+		case HUDMode_AllStyles:
+		{
+			if(!GetCachedRecords(gS_CurrentMap, iStyleOffstyle, records))
+				return Plugin_Continue;
+		}
+		case HUDMode_AllWithFallback:
+		{
+			if(!GetCachedRecords(gS_CurrentMap, iStyleOffstyle, records))
+			{
+				if(!GetCachedRecords(gS_CurrentMap, gCV_DefaultStyle.IntValue, records))
+					return Plugin_Continue;
+				bFallback = true;
+				iStyleOffstyle = gCV_DefaultStyle.IntValue;
 			}
+		}
+		case HUDMode_OnlyOnDefault:
+		{
+			if(!bDefaultStyle)
+				return Plugin_Continue;
+			if(!GetCachedRecords(gS_CurrentMap, iStyleOffstyle, records))
+				return Plugin_Continue;
 		}
 	}
 
@@ -424,15 +467,15 @@ public Action Shavit_OnTopLeftHUD(int client, int target, char[] topleft, int to
 
 	char ostext[80], sTime[32];
 	FormatSeconds(info.time, sTime, sizeof(sTime));
-	if(!bFallback)
+	if(bFallback || bShowStyleName)
 	{
-		FormatEx(ostext, sizeof(ostext), "%T", "OnTopLeftHUD", client, sTime, info.name);
+		WROS_StyleInfo aStyle;
+		gA_Styles.GetArray(gA_Styles.FindValue(iStyleOffstyle, WROS_Style_Offstyle), aStyle);
+		FormatEx(ostext, sizeof(ostext), "%T", "OnTopLeftHUD_Fallback", client, sTime, info.name, aStyle.sStyleName);
 	}
 	else
 	{
-		WROS_StyleInfo aStyle;
-		gA_Styles.GetArray(gA_Styles.FindValue(gCV_DefaultStyle.IntValue, WROS_Style_Offstyle), aStyle);
-		FormatEx(ostext, sizeof(ostext), "%T", "OnTopLeftHUD_Fallback", client, sTime, info.name, aStyle.sStyleName);
+		FormatEx(ostext, sizeof(ostext), "%T", "OnTopLeftHUD", client, sTime, info.name);
 	}
 
 	if(IsSettingEnabled(client, Setting_AfterTopLeft))
@@ -648,10 +691,16 @@ void MenuHandler_BuildWRMenu(Menu menu, MenuAction action, int client, int param
 			WROS_StyleInfo aStyle;
 			gA_Styles.GetArray(gA_Styles.FindValue(gI_LastStyle[client], WROS_Style_Offstyle), aStyle);
 
+			char sSync[16];
+			if(record.sync != -1.0)
+			{
+				FormatEx(sSync, sizeof(sSync), "%T", "RecordInfo_Title_Sync", client, record.sync);
+			}
+
 			submenu.SetTitle("%T\n ", "RecordInfo_Title", client,
 				record.name, sAuth, sDate, sTime, sDiff, record.jumps,
-				record.strafes, record.sync, record.server_hostname, aStyle.sStyleName, gS_ClientMap[client]);
-
+				record.strafes, sSync, record.server_hostname, aStyle.sStyleName, gS_ClientMap[client]);
+			
 			FormatEx(sDisplay, sizeof(sDisplay), "%T", "RecordInfo_Item_SteamProfile", client);
 			FormatEx(sInfo, sizeof(sInfo), "1%s", record._id);
 			submenu.AddItem(sInfo, sDisplay);
@@ -1301,6 +1350,7 @@ void CallOnQueryFinishedCallback(const char map[PLATFORM_MAX_PATH], ArrayList re
 public void OnClientConnected(int client)
 {
 	gI_ClientSettings[client] = gCV_DefaultSettings.IntValue;
+	gI_ClientHUDMode[client] = gCV_DefaultHUDMode.IntValue;
 }
 
 public void OnClientCookiesCached(int client)
@@ -1312,6 +1362,12 @@ public void OnClientCookiesCached(int client)
 		if(sCookie[0] != '\0')
 		{
 			gI_ClientSettings[client] = StringToInt(sCookie);
+		}
+
+		gH_CookieMode.Get(client, sCookie, sizeof(sCookie));
+		if(sCookie[0] != '\0')
+		{
+			gI_ClientHUDMode[client] = StringToInt(sCookie);
 		}
 	}
 }
@@ -1326,20 +1382,28 @@ bool IsFlagEnabled(int flag)
 	return ((gCV_Flags.IntValue & (1<<flag)) != 0); // We could add the flags as input and replace IsSettingEnabled but lets keep it for now
 }
 
-void AddSettingItem(Menu menu, int client, int hud, char[] translation)
+void AddSettingItem(Menu menu, int client, int is_mode, int setting, char[] translation, bool enabled = true)
 {
-	char sInfo[16], sDisplay[64];
-	IntToString(1<<hud, sInfo, sizeof(sInfo));
-	FormatEx(sDisplay, sizeof(sDisplay), "[%s] %T", ((gI_ClientSettings[client] & 1<<hud) > 0) ? "✓" : "✘", translation, client);
-	menu.AddItem(sInfo, sDisplay);
+	char sInfo[16], sDisplay[128];
+	if(!is_mode)
+	{
+		FormatEx(sInfo, sizeof(sInfo), "0%d", 1<<setting);
+		FormatEx(sDisplay, sizeof(sDisplay), "[%s] %T", ((gI_ClientSettings[client] & 1<<setting) > 0) ? "✓" : "✘", translation, client);
+	}
+	else
+	{
+		FormatEx(sInfo, sizeof(sInfo), "1%d", setting);
+		FormatEx(sDisplay, sizeof(sDisplay), "[%s] %T", (gI_ClientHUDMode[client] == setting) ? "✓" : "✘", translation, client);
+	}
+	menu.AddItem(sInfo, sDisplay, enabled ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
 }
 
 void FormatDiff(int client, float time, float wr_time, char[] output, int maxlen)
 {
 	// So since the wr_time returns now the the time of the 2nd place if we retrieve with from the fastest time ...
-	// we should check the difference positive is a slower run while a negative difference is the fastest run
+	// we should check the difference positive is a slower run while a negative/zero difference is the fastest run
 	float fDifference = time - wr_time;
-	if(fDifference < 0.0)
+	if(fDifference <= 0.0)
 	{
 		FormatEx(output, maxlen, "%T", "Difference_WR", client);
 	}
@@ -1693,7 +1757,7 @@ bool GuessBestMapNameEx(int client, char last_search[PLATFORM_MAX_PATH], char se
 
 	last_search = search;
 	
-	menu.SetTitle("%T", "GuessBestMapName_Title", client, search, iCount);
+	menu.SetTitle("%T\n ", "GuessBestMapName_Title", client, search, iCount);
 	if(Forward_OnMenuMade(client, WROS_Menu_Maps|gI_LastMenu[client], menu))
 	{
 		menu.Display(client, MENU_TIME_FOREVER);
@@ -1920,15 +1984,20 @@ public Action Command_Settings(int client, int args)
 void SettingsMenu(int client, int item = 0)
 {
 	Menu menu = new Menu(MenuHandler_Settings);
-	menu.SetTitle("%T", "SettingTitle", client);
+	menu.SetTitle("%T\n ", "SettingTitle", client);
 
-	AddSettingItem(menu, client, Setting_TopLeftHUD, "SettingItem_TopLeftHUD");
-	AddSettingItem(menu, client, Setting_AfterTopLeft, "SettingItem_AfterTopLeft");
-	AddSettingItem(menu, client, Setting_EveryStyle, "SettingItem_EveryStyle");
+	AddSettingItem(menu, client, false, Setting_TopLeftHUD, "SettingItem_TopLeftHUD");
+	AddSettingItem(menu, client, false, Setting_AfterTopLeft, "SettingItem_AfterTopLeft");
+
 	if(gA_Styles.Length > 1)
 	{
-		AddSettingItem(menu, client, Setting_ShowOnlyDefault, "SettingItem_ShowOnlyDefault");
-		AddSettingItem(menu, client, Setting_FallbackToDefault, "SettingItem_FallbackToDefault");
+		AddSettingItem(menu, client, true, HUDMode_AllStyles, "SettingItem_HUDMode_AllStyles");
+		AddSettingItem(menu, client, true, HUDMode_AllWithFallback, "SettingItem_HUDMode_AllWithFallback");
+		AddSettingItem(menu, client, true, HUDMode_OnlyOnDefault, "SettingItem_HUDMode_OnlyOnDefault");
+		AddSettingItem(menu, client, true, HUDMode_OnlyShowDefault, "SettingItem_HUDMode_OnlyShowDefault");
+		AddSettingItem(menu, client, false, Setting_DontShowForDefault, "SettingItem_DontShowForDefault", (gI_ClientHUDMode[client] == HUDMode_AllStyles || gI_ClientHUDMode[client] == HUDMode_AllWithFallback));
+		
+		AddSettingItem(menu, client, false, Setting_AlwaysShowStyleNames, "SettingItem_AlwaysShowStyleNames");
 	}
 	
 	menu.ExitBackButton = true;
@@ -1942,10 +2011,21 @@ public int MenuHandler_Settings(Menu menu, MenuAction action, int client, int pa
 		char sInfo[16];
 		menu.GetItem(param2, sInfo, sizeof(sInfo));
 		
-		int iSelection = StringToInt(sInfo);
+		int iSelection = StringToInt(sInfo[1]);
 
-		gI_ClientSettings[client] ^= iSelection;
-		gH_Cookie.SetInt(client, gI_ClientSettings[client]);
+		switch(sInfo[0])
+		{
+			case '0':
+			{
+				gI_ClientSettings[client] ^= iSelection;
+				gH_Cookie.SetInt(client, gI_ClientSettings[client]);
+			}
+			case '1':
+			{
+				gI_ClientHUDMode[client] = iSelection;
+				gH_CookieMode.SetInt(client, gI_ClientHUDMode[client]);
+			}
+		}
 
 		SettingsMenu(client, GetMenuSelectionPosition());
 	}

@@ -26,8 +26,8 @@
 
 #define SHAVIT_VERSION_MAJOR 4
 #define SHAVIT_VERSION_MINOR 0
-#define SHAVIT_VERSION_PATCH 1
-#define SHAVIT_VERSION "4.0.1"
+#define SHAVIT_VERSION_PATCH 2
+#define SHAVIT_VERSION "4.0.2a"
 #define STYLE_LIMIT 256
 
 // god i fucking hate sourcemod. NULL_VECTOR isn't const so it's not guaranteed to be 0,0,0
@@ -161,7 +161,8 @@ enum struct timer_snapshot_t
 	float fLastAngle;
 
 	// Internal int used for the iMeasuredJumps & iPerfectJumps stuff.
-	int iLandingTick;
+	// How many ticks the player has been on the ground since landing. 0 = in air.
+	int iGroundTicks;
 	// Internal value used for unfucking style/zone gravity when using ladders.
 	MoveType iLastMoveType;
 	// Internal value used for blocking +strafe (if block_pstrafe is enabled).
