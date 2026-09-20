@@ -17,7 +17,7 @@
  */
 
 // TODO?
-// - Native to automatically download (and cache) a replay file?
+// - Add a cache (load replay) option to WROS_RequestReplay? Maybe: (const char[] path, any data, frame_cache_t cache); for WROS_ReplayDownloadedFunc?
 // - Maybe LOOPING replay bot?
 // - Pretty sure i forgot something.. ( ͡° ͜ʖ ͡°)
 
@@ -51,7 +51,7 @@ public Plugin myinfo =
 	name = "Offstyle World Record",
 	author = "rtldg & Nairda, ƤɾσƅƖeɱ?",
 	description = "Grabs WRs from the Offstyle DB API",
-	version = "0.8.11"
+	version = "0.8.12"
 }
 
 // #define CUSTOM_BUILD // Enables custom stuff that are not part of the public build of shavits bhoptimer
@@ -99,6 +99,7 @@ enum struct download_queue_t
 	char sMap[PLATFORM_MAX_PATH];	// Mapname when we started the request, used for verification so it doesnt start the replay on another map
 	char sName[32+1]; 		// Used to cache the name of the record holder of the replay so we can set the replay name correctly......
 	char sReplayRef[32]; 	// Reference of the Offstyle replay, used to re-download a replay on download failure
+	DataPack hCallback;		// Optional callback for external replay-file requests
 	int iStyle;			// Style index, -1 if not found
 	int iRequester;		// Serial of the requester
 	int iRetries;		// Retry counter...
@@ -183,6 +184,7 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 	CreateNative("WROS_QueryMapWithFunc", Native_QueryMapWithFunc);
 
 	CreateNative("WROS_CanUseReplays", Native_CanUseReplays);
+	CreateNative("WROS_RequestReplay", Native_RequestReplay);
 	CreateNative("WROS_OpenMenu", Native_OpenMenu);
 
 	CreateNative("WROS_GetStyleCount", Native_GetStyleCount);
@@ -1436,6 +1438,19 @@ int Native_CanUseReplays(Handle plugin, int numParams)
 	return AllowReplays(GetNativeCell(1), _, GetNativeCell(2));
 }
 
+public any Native_RequestReplay(Handle plugin, int numParams)
+{
+	char id[sizeof(WROS_RecordInfo::_id)];
+	GetNativeString(1, id, sizeof(id));
+
+	DataPack callback = new DataPack();
+	callback.WriteFunction(GetNativeFunction(3));
+	callback.WriteCell(plugin);
+	callback.WriteCell(GetNativeCell(4));
+
+	return GetReplay(GetNativeCell(2), id, callback);
+}
+
 int Native_GetStyleCount(Handle plugin, int numParams)
 {
 	return gA_Styles.Length;
@@ -1594,18 +1609,41 @@ void FormatDiff(int client, float time, float wr_time, int decimals, char[] outp
 	}
 }
 
-bool GetReplay(int client, const char[] id)
+void CallReplayDownloadedCallback(DataPack pack, const char[] path)
+{
+	if(pack == null)
+	{
+		return;
+	}
+
+	pack.Reset();
+	Function callback = pack.ReadFunction();
+	Handle plugin = pack.ReadCell();
+	any data = pack.ReadCell();
+	delete pack;
+
+	Call_StartFunction(plugin, callback);
+	Call_PushString(path);
+	Call_PushCell(data);
+	Call_Finish();
+}
+
+bool GetReplay(int client, const char[] id, DataPack callback = null)
 {
 	WROS_RecordInfo record;
 	if(!GetRecordInfo(id, record))
 	{
 		LogError("Could not find record info for '%s'", id);
+		CallReplayDownloadedCallback(callback, "");
 		return false;
 	}
 
 	if(!StrEqual(record.map, gS_CurrentMap, false))
 	{
-		CPrintToChat(client, "%T", "Chat_Replay_MapMismatch", client, record.map);
+		if(callback == null)
+			CPrintToChat(client, "%T", "Chat_Replay_MapMismatch", client, record.map);
+		else
+			CallReplayDownloadedCallback(callback, "");
 		return false;
 	}
 
@@ -1613,7 +1651,10 @@ bool GetReplay(int client, const char[] id)
 	int iReplayStyle = WROS_ConvertStyle(record.style, WROS_Style_Offstyle, WROS_Style_Replay);
 	if(iReplayStyle == -1)
 	{
-		CPrintToChat(client, "%T", "Chat_NoAccess_ReplayStyle", client);
+		if(callback == null)
+			CPrintToChat(client, "%T", "Chat_NoAccess_ReplayStyle", client);
+		else
+			CallReplayDownloadedCallback(callback, "");
 		return false; // Disabled
 	}
 
@@ -1625,6 +1666,11 @@ bool GetReplay(int client, const char[] id)
 
 	if(!bQueued && FileExists(sOutputFile))
 	{
+		if(callback != null)
+		{
+			CallReplayDownloadedCallback(callback, sOutputFile);
+			return true;
+		}
 		return StartReplay(client, iReplayStyle, sOutputFile, record.name);
 	}
 	else if(bQueued)
@@ -1636,7 +1682,10 @@ bool GetReplay(int client, const char[] id)
 			gA_DownloadQueue.GetArray(i, aQueue);
 			if(aQueue.iRequester == iSerial && StrEqual(sOutputFile, aQueue.sPath))
 			{
-				CPrintToChat(client, "%T", "Chat_Download_Queued", client);
+				if(callback == null)
+					CPrintToChat(client, "%T", "Chat_Download_Queued", client);
+				else
+					CallReplayDownloadedCallback(callback, "");
 				return false;
 			}
 		}
@@ -1654,6 +1703,7 @@ bool GetReplay(int client, const char[] id)
 	aQueue.iStyle = iReplayStyle;
 	aQueue.sName = record.name;
 	aQueue.sReplayRef = record.replay_ref;
+	aQueue.hCallback = callback;
 	aQueue.fTime = bQueued ? 0.0 : GetEngineTime();
 	gA_DownloadQueue.PushArray(aQueue);
 
@@ -1763,6 +1813,12 @@ void OnDownloadFinished_Callback(HTTPStatus status, any value, const char[] erro
 
 void DownloadFinished(int client, bool success, download_queue_t queue, float time_elapsed)
 {
+	if(queue.hCallback != null)
+	{
+		CallReplayDownloadedCallback(queue.hCallback, (success && StrEqual(queue.sMap, gS_CurrentMap)) ? queue.sPath : "");
+		return;
+	}
+
 	if(client)
 	{
 		if(!success)

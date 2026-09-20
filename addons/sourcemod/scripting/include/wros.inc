@@ -53,6 +53,11 @@ typeset WROS_QueryFinishedFunc
 	function void (const char map[PLATFORM_MAX_PATH], ArrayList records, any data);
 };
 
+typeset WROS_ReplayDownloadedFunc
+{
+	function void (const char[] path, any data);
+};
+
 /**
  * Queries a map in the Offstyle API.
  * 
@@ -83,6 +88,17 @@ native bool WROS_QueryMapWithFunc(const char[] map, bool cached_results_okay, in
  * @return                        True on access, false otherwise.
  */
 native bool WROS_CanUseReplays(int client, bool notify = true);
+
+/**
+ * Requests a replay file without starting a replay bot.
+ *
+ * @param id                        Offstyle record ID.
+ * @param client                    Client requesting the replay.
+ * @param callback                  Called with the downloaded path, or an empty path on failure.
+ * @param data                      Extra data value to pass to the callback.
+ * @return                          True if the request was accepted.
+ */
+native bool WROS_RequestReplay(const char[] id, int client, WROS_ReplayDownloadedFunc callback, any data);
 
 /**
  * Returns the ArrayList of the wros styles. (wros.cfg)
@@ -195,6 +211,7 @@ public void __pl_wros_SetNTVOptional()
 	MarkNativeAsOptional("WROS_QueryMapWithFunc");
 
 	MarkNativeAsOptional("WROS_CanUseReplays");
+	MarkNativeAsOptional("WROS_RequestReplay");
 	MarkNativeAsOptional("WROS_OpenMenu");
 
 	MarkNativeAsOptional("WROS_GetStyleCount");
